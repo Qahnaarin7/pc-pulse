@@ -108,6 +108,10 @@ final class PcConnection {
         return usingRelay || addresses.length == 0 ? "Cloudflare" : addresses[preferred];
     }
 
+    boolean hasCloudflare() {
+        return relay != null;
+    }
+
     void updateNetwork(Context context) {
         if (relay == null) {
             return;
@@ -285,7 +289,11 @@ final class PcConnection {
 
     static final class RejectedException extends IOException {}
     static final class ConflictException extends IOException {}
-    private static final class ServerResponseException extends IOException {
-        ServerResponseException(int status) { super("HTTP " + status); }
+    static final class ServerResponseException extends IOException {
+        final int status;
+        ServerResponseException(int status) {
+            super("HTTP " + status);
+            this.status = status;
+        }
     }
 }

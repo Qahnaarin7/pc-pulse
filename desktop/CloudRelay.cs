@@ -109,7 +109,7 @@ internal sealed class CloudRelay : IAsyncDisposable
         lock (gate)
         {
             if (settings is not { Enabled: true, Enrollment.Length: 0 } active)
-                return localCode;
+                return null;
             var code = new RelayPairing(localCode, active.Origin, active.DeviceId, clientKey, PairingIdentity.Encode(dataKey));
             return "PCP3-" + PairingIdentity.Encode(JsonSerializer.SerializeToUtf8Bytes(code, Json));
         }

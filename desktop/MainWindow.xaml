@@ -1,7 +1,7 @@
 <Window x:Class="PcPulse.Desktop.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="PC Pulse" Width="920" Height="730" MinWidth="670" MinHeight="530"
+    Title="PC Pulse" Icon="Assets/Pulse.ico" Width="920" Height="730" MinWidth="670" MinHeight="530"
     Background="{DynamicResource Back}" Foreground="{DynamicResource Ink}"
     FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="14"
     WindowStartupLocation="CenterScreen"
@@ -183,16 +183,22 @@
                         <TextBlock x:Name="AddressList" Style="{StaticResource Muted}" Margin="0,7,0,10" />
                         <DockPanel>
                             <Button x:Name="CopyCodeButton" DockPanel.Dock="Left" Style="{StaticResource StrongButton}"
-                                Content="Копіювати код" IsEnabled="False" Click="CopyCodeClicked" />
+                                Content="Копіювати код Wi-Fi / VPN" IsEnabled="False" Click="CopyCodeClicked" />
                             <TextBlock x:Name="CopyFeedback" Style="{StaticResource Muted}" Margin="12,0,0,0" VerticalAlignment="Center" />
                         </DockPanel>
-                        <TextBlock Text="Код може містити локальні адреси й доступ через Cloudflare. Для Cloudflare спочатку підключіть ретранслятор нижче."
+                        <TextBlock Text="Для доступу через мобільний інтернет скопіюйте код Cloudflare нижче."
                             Style="{StaticResource Muted}" Margin="0,12,0,0" />
                     </StackPanel>
                 </Border>
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <TextBlock Text="Доступ через інтернет" FontSize="19" FontWeight="SemiBold" />
+                        <TextBlock x:Name="RelayStatus" Style="{StaticResource Muted}" Margin="0,8,0,8" />
+                        <Button x:Name="CopyRelayCodeButton" HorizontalAlignment="Left" Style="{StaticResource StrongButton}"
+                            Content="Копіювати код Cloudflare" IsEnabled="False" Click="CopyRelayCodeClicked" />
+                        <TextBlock x:Name="CopyRelayFeedback" Style="{StaticResource Muted}" Margin="0,6,0,0" />
+                        <Expander Header="Налаштування ретранслятора" Foreground="{DynamicResource Ink}" Margin="0,12,0,0">
+                          <StackPanel>
                         <CheckBox x:Name="RelayEnabled" Content="Підключатися через Cloudflare Workers"
                             Foreground="{DynamicResource Ink}" Margin="0,12,0,10" />
                         <TextBlock Text="HTTPS-адреса Worker" Style="{StaticResource Muted}" />
@@ -204,10 +210,10 @@
                         <DockPanel>
                             <Button x:Name="RelaySave" DockPanel.Dock="Left" Content="Зберегти" Click="SaveRelayClicked"
                                 IsEnabled="False" />
-                            <TextBlock x:Name="RelayStatus" Style="{StaticResource Muted}" Margin="12,0,0,0"
-                                VerticalAlignment="Center" />
                         </DockPanel>
                         <TextBlock x:Name="RelayFeedback" Style="{StaticResource Muted}" Margin="0,6,0,0" />
+                          </StackPanel>
+                        </Expander>
                     </StackPanel>
                 </Border>
                 <Border Style="{StaticResource Card}">

@@ -22,7 +22,7 @@ Run the managed relay in your Cloudflare account once. After the PC is registere
 1. From the repository's `relay` folder, run `npm ci` and `npx wrangler login`.
 2. Generate an enrollment key with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`. Put it in a private JSON file with the property `RELAY_ENROLLMENT_KEY`.
 3. Deploy with `npx wrangler deploy --secrets-file path-to-private.json`. Copy the HTTPS URL printed by Wrangler. A personal deployment can use `workers.dev`.
-4. In Windows PC Pulse settings, enable Cloudflare access and enter the HTTPS URL and enrollment key. Wait for **Connected**, then copy the new pairing code into Android. The PC saves its individual host credentials after registering.
+4. In Windows PC Pulse, open **Settings → Internet access → Relay settings**, enable Cloudflare, and enter the HTTPS URL and enrollment key. Once connected, select **Copy Cloudflare code**. Paste it under **Settings → Pairing code** on Android, then save the connection. The PC saves its individual host credentials after registering. The Android status shows when the active route uses Cloudflare.
 
 Phone requests and PC responses use end-to-end AES-GCM encryption. The Worker validates separate random routing credentials and forwards encrypted messages. The encryption key stays with the paired apps. The relay processes routing identifiers, timing, and ciphertext length. Keep the enrollment key private. It controls registration of new PCs and belongs outside the repository.
 
@@ -66,7 +66,7 @@ Windows builds use the .NET 10 SDK, Python 3.10 or later, and WiX Toolset 3.14.1
 
 ```powershell
 dotnet publish .\desktop\PcPulse.Desktop.csproj -c Release -r win-x64 --self-contained true -o .\dist\win-x64
-python .\installer\build.py --wix C:\path\to\wix --payload .\dist\win-x64 --version 0.5.0 --out .\dist\PC-Pulse-Windows-x64.msi
+python .\installer\build.py --wix C:\path\to\wix --payload .\dist\win-x64 --version 0.5.1 --out .\dist\PC-Pulse-Windows-x64.msi
 ```
 
 For Arm64, use `-r win-arm64` with .NET and `--architecture arm64` with the installer script. Use `--port` to run a Windows test instance on a different TCP port. Pairing credentials and thermal settings are kept in the local Windows user profile.

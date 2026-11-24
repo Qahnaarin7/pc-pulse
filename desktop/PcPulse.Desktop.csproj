@@ -5,9 +5,12 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
-    <Version>0.5.0</Version>
+    <Version>0.5.1</Version>
     <ApplicationIcon>Assets\Pulse.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets\Pulse.ico" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\agent\PcPulse.Agent.csproj" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />

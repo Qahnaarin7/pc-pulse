@@ -92,6 +92,7 @@ public final class MainActivity extends Activity {
     private int generation;
     private int failures;
     private boolean resumed;
+    private Runnable refreshProtection;
     private boolean setup;
     private boolean processes;
     private boolean sensors;
@@ -172,6 +173,8 @@ public final class MainActivity extends Activity {
         if (!setup) {
             setStatus("Підключення…", palette.muted);
             restartPolling();
+        } else if (refreshProtection != null) {
+            handler.post(refreshProtection);
         }
     }
 
@@ -196,6 +199,9 @@ public final class MainActivity extends Activity {
 
     @Override protected void onPause() {
         resumed = false;
+        if (refreshProtection != null) {
+            handler.removeCallbacks(refreshProtection);
+        }
         stopPolling();
         super.onPause();
     }
@@ -268,21 +274,13 @@ public final class MainActivity extends Activity {
                     16, palette.muted, false), 10);
         } else {
             add(content, button("До огляду", false, this::openDashboard), 12);
-            LinearLayout appearance = card();
-            add(appearance, label("Тема", 17, palette.text, true), 0);
-            LinearLayout choices = row();
-            choices.addView(button("За системою", "system".equals(themeMode), () -> changeTheme("system")), weighted());
-            addThemeChoice(choices, "День", "day");
-            addThemeChoice(choices, "Ніч", "night");
-            add(appearance, choices, 9);
-            add(content, appearance, 14);
-            renderAlertSettings(content);
-            renderProtectionSettings(content);
         }
 
         LinearLayout form = card();
         add(content, form, 24);
         add(form, label("Код підключення", 15, palette.text, true), 0);
+        add(form, label("Для мобільного інтернету на ПК відкрийте «Налаштування» → «Доступ через інтернет» і скопіюйте код Cloudflare.",
+                13, palette.muted, false), 6);
         EditText input = input("Код із Windows");
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
                 | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
@@ -331,7 +329,18 @@ public final class MainActivity extends Activity {
             openDashboard();
         }), 10);
         if (pc != null) {
-            add(form, label("Поточна адреса · " + pc.address(), 13, palette.muted, false), 12);
+            add(form, label(pc.hasCloudflare() ? "Cloudflare налаштовано" : "Підключення через Wi-Fi / VPN",
+                    13, palette.muted, false), 12);
+            renderProtectionSettings(content);
+            renderAlertSettings(content);
+            LinearLayout appearance = card();
+            add(appearance, label("Тема", 17, palette.text, true), 0);
+            LinearLayout choices = row();
+            choices.addView(button("За системою", "system".equals(themeMode), () -> changeTheme("system")), weighted());
+            addThemeChoice(choices, "День", "day");
+            addThemeChoice(choices, "Ніч", "night");
+            add(appearance, choices, 9);
+            add(content, appearance, 14);
         } else {
             add(content, label("Код дає доступ до показників ПК. Зберігайте його як пароль.", 14, palette.muted, false), 18);
         }
@@ -416,7 +425,12 @@ public final class MainActivity extends Activity {
         TextView state = label("Перевіряю підтримку…", 13, palette.muted, false);
         state.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         add(form, state, 9);
+        JSONObject[] synced = {null};
+        boolean[] saving = {false};
         TextView save = button("Зберегти термозахист", true, () -> {
+            if (saving[0]) {
+                return;
+            }
             int cpuValue;
             int gpuValue;
             try {
@@ -430,25 +444,73 @@ public final class MainActivity extends Activity {
                 return;
             }
             boolean requested = enabled.isChecked();
+            saving[0] = true;
             network.execute(() -> {
                 try {
                     JSONObject updated = endpoint.saveProtection(requested, cpuValue, gpuValue);
-                    handler.post(() -> updateProtection(form, enabled, cpu, gpu, state, updated));
+                    handler.post(() -> {
+                        saving[0] = false;
+                        synced[0] = updated;
+                        updateProtection(form, enabled, cpu, gpu, state, updated, true);
+                    });
                 } catch (Exception error) {
-                    handler.post(() -> state.setText("ПК не підтвердив збереження."));
+                    handler.post(() -> {
+                        saving[0] = false;
+                        state.setText("ПК не підтвердив збереження.");
+                    });
                 }
             });
         });
         add(form, save, 10);
         setProtectionEnabled(enabled, cpu, gpu, save, false);
-        network.execute(() -> {
-            try {
-                JSONObject status = endpoint.protectionStatus();
-                handler.post(() -> updateProtection(form, enabled, cpu, gpu, state, status));
-            } catch (Exception error) {
-                handler.post(() -> state.setText("Термозахист недоступний. Перевірте з’єднання й версію PC Pulse на Windows."));
+        refreshProtection = new Runnable() {
+            @Override public void run() {
+                if (!resumed || refreshProtection != this || !form.isAttachedToWindow()) {
+                    return;
+                }
+                endpoint.updateNetwork(MainActivity.this);
+                network.execute(() -> {
+                    try {
+                        JSONObject status = endpoint.protectionStatus();
+                        handler.post(() -> {
+                            if (!saving[0]) {
+                                JSONObject previous = synced[0];
+                                boolean clean = previous == null || enabled.isChecked() == previous.optBoolean("enabled") &&
+                                        cpu.getText().toString().equals(Integer.toString(previous.optInt("cpuCritical", 95))) &&
+                                        gpu.getText().toString().equals(Integer.toString(previous.optInt("gpuCritical", 85)));
+                                if (clean) {
+                                    synced[0] = status;
+                                }
+                                updateProtection(form, enabled, cpu, gpu, state, status, clean);
+                            }
+                        });
+                    } catch (Exception error) {
+                        handler.post(() -> state.setText(protectionError(error)));
+                    } finally {
+                        handler.post(() -> {
+                            if (resumed && refreshProtection == this && form.isAttachedToWindow()) {
+                                handler.removeCallbacks(this);
+                                handler.postDelayed(this, 5000);
+                            }
+                        });
+                    }
+                });
             }
-        });
+        };
+        if (resumed) {
+            handler.post(refreshProtection);
+        }
+    }
+
+    private static String protectionError(Exception error) {
+        if (error instanceof PcConnection.RejectedException) {
+            return "ПК відхилив код. Скопіюйте новий код підключення з Windows.";
+        }
+        if (error instanceof PcConnection.ServerResponseException &&
+                ((PcConnection.ServerResponseException) error).status == 404) {
+            return "На цій адресі відповідає старий агент. Перезапустіть PC Pulse на ПК.";
+        }
+        return "ПК не відповідає. Перевірте, чи запущено PC Pulse на Windows.";
     }
 
     private EditText addProtectionThreshold(LinearLayout thresholds, String caption) {
@@ -469,14 +531,22 @@ public final class MainActivity extends Activity {
     }
 
     private void updateProtection(LinearLayout form, Switch enabled, EditText cpu, EditText gpu,
-                                  TextView status, JSONObject value) {
+                                  TextView status, JSONObject value, boolean replaceValues) {
         if (!form.isAttachedToWindow()) {
             return;
         }
         boolean supported = value.optBoolean("supported");
-        enabled.setChecked(value.optBoolean("enabled"));
-        cpu.setText(Integer.toString(value.optInt("cpuCritical", 95)));
-        gpu.setText(Integer.toString(value.optInt("gpuCritical", 85)));
+        if (replaceValues) {
+            enabled.setChecked(value.optBoolean("enabled"));
+            String cpuValue = Integer.toString(value.optInt("cpuCritical", 95));
+            String gpuValue = Integer.toString(value.optInt("gpuCritical", 85));
+            if (!cpuValue.contentEquals(cpu.getText())) {
+                cpu.setText(cpuValue);
+            }
+            if (!gpuValue.contentEquals(gpu.getText())) {
+                gpu.setText(gpuValue);
+            }
+        }
         View save = form.getChildAt(form.getChildCount() - 1);
         setProtectionEnabled(enabled, cpu, gpu, save, supported);
         String state;
@@ -785,7 +855,7 @@ public final class MainActivity extends Activity {
     private void updateComponents(TextView view, JSONObject data, String key, boolean enabled, boolean compatible) {
         if (data == null) {
             setText(view, !enabled ? "Сенсори вимкнено"
-                    : compatible ? "Зчитування датчиків…" : "Оновіть PC Pulse на Windows");
+                    : compatible ? "Зчитування датчиків…" : "Поточний агент не передає ці датчики");
             return;
         }
         JSONArray entries = data.optJSONArray(key);
@@ -1018,7 +1088,8 @@ public final class MainActivity extends Activity {
                     } else {
                         updateOverview(json);
                     }
-                    setStatus("Оновлено о " + updatedAt, palette.accent);
+                    String route = "Cloudflare".equals(endpoint.address()) ? " · Cloudflare" : "";
+                    setStatus("Оновлено о " + updatedAt + route, palette.accent);
                     handler.postDelayed(poll, processTab ? 5_000 : 2_000);
                 });
             } catch (Exception error) {

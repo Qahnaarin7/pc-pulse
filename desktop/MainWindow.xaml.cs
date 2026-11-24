@@ -259,33 +259,37 @@ public partial class MainWindow : Window
         AddressList.Text = addresses.Count == 0 ? "Активних локальних IPv4-адрес поки немає."
             : string.Join("   ·   ", addresses.Select(a => $"{a.Adapter} {a.Address}"));
         var status = relay?.ReadStatus();
-        CopyCodeButton.IsEnabled = identity is not null && (addresses.Count > 0 || status?.CanPair == true);
+        CopyCodeButton.IsEnabled = identity is not null && addresses.Count > 0;
+        CopyRelayCodeButton.IsEnabled = identity is not null && status?.CanPair == true;
         RelayStatus.Text = status?.State switch
         {
-            "online" => "Підключено. Скопіюйте новий код для телефона.",
+            "online" => "Cloudflare підключено. У PC Pulse на телефоні відкрийте «Налаштування», вставте код і збережіть підключення.",
             "connecting" => "Підключення до Cloudflare…",
             "offline" => "Cloudflare не відповів. Перевірте адресу й ключ реєстрації.",
-            _ => "Вимкнено."
+            _ => "Cloudflare вимкнено. Відкрийте налаштування ретранслятора, щоб додати Worker."
         };
     }
 
-    private void CopyCodeClicked(object sender, RoutedEventArgs args)
+    private void CopyCodeClicked(object sender, RoutedEventArgs args) => CopyPairingCode(false, CopyFeedback);
+    private void CopyRelayCodeClicked(object sender, RoutedEventArgs args) => CopyPairingCode(true, CopyRelayFeedback);
+
+    private void CopyPairingCode(bool cloud, TextBlock feedback)
     {
         var addresses = MonitorServer.PrivateAddresses();
         if (identity is null)
             return;
         var direct = addresses.Count > 0 ? identity.CreateCode(addresses, port) : null;
-        var code = relay?.PhoneCode(direct) ?? direct;
+        var code = cloud ? relay?.PhoneCode(direct) : direct;
         if (code is null)
             return;
         try
         {
             Clipboard.SetText(code);
-            CopyFeedback.Text = "Код скопійовано. Вставте його в PC Pulse на телефоні.";
+            feedback.Text = "Код скопійовано. Вставте його в PC Pulse на телефоні.";
         }
         catch (System.Runtime.InteropServices.ExternalException)
         {
-            CopyFeedback.Text = "Буфер обміну зайнятий. Спробуйте ще раз.";
+            feedback.Text = "Буфер обміну зайнятий. Спробуйте ще раз.";
         }
     }
 

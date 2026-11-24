@@ -64,7 +64,7 @@ def generate(payload, architecture, version, file):
     element(welcome, "Control", Id="Heading", Type="Text", X="20", Y="20", Width="330",
             Height="19", Text="Install PC Pulse for Windows")
     element(welcome, "Control", Id="Description", Type="Text", X="20", Y="49", Width="330",
-            Height="38", Text="Sets up the tray app, Start menu shortcut, and scoped LAN and Tailscale firewall rules.")
+            Height="38", Text="Sets up the tray app, desktop and Start menu shortcuts, and scoped LAN and Tailscale firewall rules.")
     install = element(welcome, "Control", Id="Confirm", Type="PushButton", X="228", Y="115", Width="56",
                       Height="18", Default="yes", Text="Install")
     cancel = element(welcome, "Control", Id="Cancel", Type="PushButton", X="295", Y="115", Width="56",
@@ -78,6 +78,7 @@ def generate(payload, architecture, version, file):
     main = element(target, "Directory", Id="ProgramFiles64Folder")
     app = element(main, "Directory", Id="INSTALLDIR", Name="PC Pulse")
     element(target, "Directory", Id="ProgramMenuFolder")
+    element(target, "Directory", Id="DesktopFolder")
     feature = element(product, "Feature", Id="PcPulseFeature", Title="PC Pulse", Level="1")
     directories = {".": app}
     for item in sorted(payload.rglob("*")):
@@ -98,7 +99,9 @@ def generate(payload, architecture, version, file):
                             Name=relative.name, Source=str(item), KeyPath="yes")
         if primary:
             element(installed, "Shortcut", Id="OpenPcPulse", Directory="ProgramMenuFolder",
-                    Name="PC Pulse", WorkingDirectory="INSTALLDIR", Advertise="yes")
+                    Name="PC Pulse", WorkingDirectory="INSTALLDIR", Advertise="yes", Icon="Pulse.ico")
+            element(installed, "Shortcut", Id="OpenPcPulseDesktop", Directory="DesktopFolder",
+                    Name="PC Pulse", WorkingDirectory="INSTALLDIR", Advertise="yes", Icon="Pulse.ico")
             firewall(component)
         element(feature, "ComponentRef", Id=component_id)
     ET.indent(root)
@@ -110,7 +113,7 @@ def main():
     parser.add_argument("--wix", required=True, type=Path)
     parser.add_argument("--payload", required=True, type=Path)
     parser.add_argument("--architecture", choices=("x64", "arm64"), default="x64")
-    parser.add_argument("--version", default="0.5.0")
+    parser.add_argument("--version", default="0.5.1")
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
     payload = args.payload.resolve(strict=True)
