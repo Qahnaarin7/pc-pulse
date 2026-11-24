@@ -92,6 +92,9 @@ public final class ThermalAlertService extends Service {
 
     @Override public void onDestroy() {
         network.shutdownNow();
+        if (pc != null) {
+            pc.close();
+        }
         super.onDestroy();
     }
 
@@ -107,6 +110,9 @@ public final class ThermalAlertService extends Service {
             thresholds = configured;
             nextAttempt = 0;
             if (!currentPairing.equals(pairing)) {
+                if (pc != null) {
+                    pc.close();
+                }
                 pc = null;
             }
         }

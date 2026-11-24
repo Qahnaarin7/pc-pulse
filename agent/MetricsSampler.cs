@@ -73,6 +73,23 @@ sealed class MetricsSampler(bool sensorsEnabled) : IDisposable
         catch (Exception) { return false; }
     }
 
+    public bool SupportsKeyboard()
+    {
+        if (!sensorsEnabled)
+            return false;
+        try { return gigabyte.Value?.SupportsKeyboard == true; }
+        catch (Exception) { return false; }
+    }
+
+    public bool ChangeKeyboardColor(KeyboardColor? color)
+    {
+        lock (sensorLock)
+        {
+            var keyboard = gigabyte.Value;
+            return keyboard is not null && (color is { } rgb ? keyboard.SetKeyboardColor(rgb) : keyboard.RestoreKeyboardColor());
+        }
+    }
+
     public CoolingResponse? SetCoolingMode(bool maximum)
     {
         if (!sensorsEnabled)
@@ -115,7 +132,7 @@ sealed class MetricsSampler(bool sensorsEnabled) : IDisposable
                     previous.Processes.TryGetValue(pid, out var item) && item.Time is { } then &&
                     now.Created == then.Created && now.Total >= then.Total)
                     cpu = Percent(100d * (now.Total - then.Total) / delta);
-                entries.Add(new ProcessEntry(pid, info.Name, info.WorkingSet, cpu));
+                entries.Add(new ProcessEntry(pid, info.Name, info.WorkingSet, cpu, info.Time?.Created));
             }
             processCounters = current;
             processSnapshot = new ProcessSnapshot(DateTimeOffset.UtcNow, entries,
@@ -126,6 +143,19 @@ sealed class MetricsSampler(bool sensorsEnabled) : IDisposable
         {
             processLock.Release();
         }
+    }
+
+    public async Task<ProcessAction> TerminateProcessAsync(int pid, ulong started, CancellationToken cancellationToken)
+    {
+        await processLock.WaitAsync(cancellationToken);
+        try
+        {
+            var result = WindowsCounters.TryTerminate(pid, started);
+            if (result == "ended")
+                processSnapshot = null;
+            return new ProcessAction(result);
+        }
+        finally { processLock.Release(); }
     }
 
     private static ProcessCounterSample ReadProcessCounters()
@@ -251,15 +281,19 @@ sealed class MetricsSampler(bool sensorsEnabled) : IDisposable
             float? cpu = null;
             string? cpuSource = null;
             var gpus = new List<GpuEntry>();
+            GigabyteTelemetry? vendor = null;
+            try { vendor = gigabyte.Value?.Read(); }
+            catch (Exception) { }
             try
             {
+                var architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture;
+                var readCpu = (elevated || vendor is null) && architecture is
+                    System.Runtime.InteropServices.Architecture.X86 or System.Runtime.InteropServices.Architecture.X64;
                 if (computer is null)
                 {
-                    var architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture;
                     var newComputer = new Computer
                     {
-                        IsCpuEnabled = architecture is System.Runtime.InteropServices.Architecture.X86
-                            or System.Runtime.InteropServices.Architecture.X64,
+                        IsCpuEnabled = readCpu,
                         IsGpuEnabled = true
                     };
                     try
@@ -273,6 +307,8 @@ sealed class MetricsSampler(bool sensorsEnabled) : IDisposable
                         throw;
                     }
                 }
+                else if (readCpu && !computer.IsCpuEnabled)
+                    computer.IsCpuEnabled = true;
 
                 foreach (var hardware in computer.Hardware)
                 {
@@ -316,15 +352,6 @@ sealed class MetricsSampler(bool sensorsEnabled) : IDisposable
                 // Hardware monitoring is optional on systems without compatible sensors.
             }
 
-            GigabyteTelemetry? vendor = null;
-            try
-            {
-                vendor = gigabyte.Value?.Read();
-            }
-            catch (Exception)
-            {
-                // A vendor driver can be absent or unavailable.
-            }
             if (cpu.HasValue)
                 cpuSource = "hardware_monitor";
             else if (vendor is not null)
@@ -411,5 +438,6 @@ sealed record TemperatureResponse(DateTimeOffset? SampledAt, float? CpuTemperatu
     List<GpuEntry> Gpus, string CpuTemperatureStatus, CoolingResponse? Cooling);
 sealed record MemoryEntry(ulong UsedBytes, ulong TotalBytes);
 sealed record GpuEntry(string Name, float? TemperatureC, float? LoadPercent);
-sealed record ProcessEntry(int Pid, string Name, long WorkingSetBytes, double? CpuPercent);
+sealed record ProcessEntry(int Pid, string Name, long WorkingSetBytes, double? CpuPercent, ulong? Started);
+sealed record ProcessAction(string Result);
 sealed record ProcessSnapshot(DateTimeOffset SampledAt, List<ProcessEntry> Processes, double? CpuWindowSeconds);

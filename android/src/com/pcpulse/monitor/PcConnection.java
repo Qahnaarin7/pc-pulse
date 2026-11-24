@@ -35,8 +35,11 @@ final class PcConnection {
     private final String[] addresses;
     private volatile int preferred;
     private final RelayConnection relay;
+    private final BluetoothConnection bluetooth;
+    private volatile Context context;
     private volatile boolean mobile;
     private volatile boolean usingRelay;
+    private volatile boolean usingBluetooth;
     private Network activeNetwork;
     private final String token;
     private final byte[] pin;
@@ -47,13 +50,38 @@ final class PcConnection {
     }
 
     private PcConnection(String[] addresses, String token, byte[] pin, RelayConnection relay) {
+        this(addresses, token, pin, relay, null);
+    }
+
+    private PcConnection(String[] addresses, String token, byte[] pin, RelayConnection relay, BluetoothConnection bluetooth) {
         this.addresses = addresses;
         this.token = token;
         this.pin = pin;
         this.relay = relay;
+        this.bluetooth = bluetooth;
     }
 
     static PcConnection fromCode(String code) {
+        if (code.startsWith("PCP4-")) {
+            if (!code.matches("PCP4-[a-zA-Z0-9_-]{100,6500}")) {
+                throw new IllegalArgumentException("Вставте весь код Bluetooth із Windows.");
+            }
+            try {
+                JSONObject fields = new JSONObject(new String(Base64.decode(code.substring(5), BASE64), StandardCharsets.UTF_8));
+                BluetoothConnection bt = new BluetoothConnection(fields.getString("bluetooth"), fields.getString("dataKey"));
+                String alternate = fields.isNull("network") ? "" : fields.getString("network");
+                if (alternate.isEmpty()) {
+                    return new PcConnection(new String[0], "", new byte[0], null, bt);
+                }
+                if (!alternate.matches("PCP[123]-[a-zA-Z0-9_-]+")) {
+                    throw new IllegalArgumentException();
+                }
+                PcConnection network = fromCode(alternate);
+                return new PcConnection(network.addresses, network.token, network.pin, network.relay, bt);
+            } catch (Exception error) {
+                throw new IllegalArgumentException("Код Bluetooth пошкоджений.", error);
+            }
+        }
         if (code.startsWith("PCP3-")) {
             if (!code.matches("PCP3-[a-zA-Z0-9_-]{160,3900}")) {
                 throw new IllegalArgumentException("Вставте весь код Cloudflare із Windows.");
@@ -105,6 +133,9 @@ final class PcConnection {
     }
 
     String address() {
+        if (usingBluetooth || addresses.length == 0 && relay == null && bluetooth != null) {
+            return "Bluetooth";
+        }
         return usingRelay || addresses.length == 0 ? "Cloudflare" : addresses[preferred];
     }
 
@@ -112,7 +143,20 @@ final class PcConnection {
         return relay != null;
     }
 
+    boolean hasBluetooth() {
+        return bluetooth != null;
+    }
+
+    void close() {
+        if (bluetooth != null) {
+            bluetooth.close();
+        }
+    }
+
     void updateNetwork(Context context) {
+        if (bluetooth != null) {
+            this.context = context.getApplicationContext();
+        }
         if (relay == null) {
             return;
         }
@@ -140,8 +184,21 @@ final class PcConnection {
         return fetch("/v1/cooling/" + (maximum ? "maximum" : "automatic"), "POST");
     }
 
+    JSONObject terminateProcess(int pid, long started) throws Exception {
+        return fetch("/v1/processes/" + pid + "/terminate?started=" + started, "POST");
+    }
+
     JSONObject protectionStatus() throws Exception {
         return fetch("/v1/thermal-protection", "GET");
+    }
+
+    JSONObject keyboardStatus() throws Exception {
+        return fetch("/v1/keyboard-temperature", "GET");
+    }
+
+    JSONObject saveKeyboard(boolean enabled, int[] values) throws Exception {
+        return fetch("/v1/keyboard-temperature?enabled=" + enabled + "&cpuWarm=" + values[0]
+                + "&cpuHot=" + values[1] + "&gpuWarm=" + values[2] + "&gpuHot=" + values[3], "POST");
     }
 
     JSONObject saveProtection(boolean enabled, int cpuCritical, int gpuCritical) throws Exception {
@@ -152,6 +209,18 @@ final class PcConnection {
     private JSONObject fetch(String path, String method) throws Exception {
         int first = preferred;
         IOException problem = null;
+        if (bluetooth != null) {
+            try {
+                JSONObject response = bluetooth.fetch(context, path, method);
+                usingBluetooth = true;
+                return response;
+            } catch (RejectedException | ConflictException | ServerResponseException error) {
+                throw error;
+            } catch (IOException error) {
+                usingBluetooth = false;
+                problem = error;
+            }
+        }
         boolean triedRelay = relay != null && (mobile || usingRelay || addresses.length == 0);
         if (triedRelay) {
             try {
@@ -220,6 +289,7 @@ final class PcConnection {
         connection.setInstanceFollowRedirects(false);
         connection.setUseCaches(false);
         connection.setRequestProperty("Authorization", "Bearer " + token);
+        connection.setRequestProperty("X-PC-Pulse-Phone", "lan");
         boolean consumed = false;
         try {
             int status = connection.getResponseCode();

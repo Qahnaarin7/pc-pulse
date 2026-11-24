@@ -26,6 +26,9 @@ internal sealed class CloudRelay : IAsyncDisposable
     private static readonly Regex EnvelopeId = new("^[a-f0-9]{32}$");
     private static readonly Regex SavePath = new(
         @"^/v1/thermal-protection\?enabled=(true|false)&cpuCritical=[0-9]{2,3}&gpuCritical=[0-9]{2,3}$");
+    private static readonly Regex ProcessActionPath = new(@"^/v1/processes/[0-9]{1,10}/terminate\?started=[0-9]{1,19}$");
+    private static readonly Regex KeyboardPath = new(
+        @"^/v1/keyboard-temperature\?enabled=(true|false)&cpuWarm=[0-9]{2,3}&cpuHot=[0-9]{2,3}&gpuWarm=[0-9]{2,3}&gpuHot=[0-9]{2,3}$");
 
     private readonly string file = Path.Combine(PairingIdentity.StateDirectory, "cloud-relay.json");
     private readonly object gate = new();
@@ -67,6 +70,8 @@ internal sealed class CloudRelay : IAsyncDisposable
             return new RelayStatus(settings?.Enabled == true, settings?.Origin ?? "", state,
                 settings is { Enabled: true, Enrollment.Length: 0 });
     }
+
+    internal string EncodedDataKey => PairingIdentity.Encode(dataKey);
 
     internal void Configure(bool enabled, string address, string enrollment)
     {
@@ -221,7 +226,7 @@ internal sealed class CloudRelay : IAsyncDisposable
         }
     }
 
-    private async Task<byte[]?> HandleRequest(byte[] frame, CancellationToken token)
+    internal async Task<byte[]?> HandleRequest(byte[] frame, CancellationToken token, string transport = "cloudflare")
     {
         string id;
         RelayRequest? request;
@@ -241,10 +246,13 @@ internal sealed class CloudRelay : IAsyncDisposable
         if (request is null || request.At < now - 45_000 || request.At > now + 45_000 ||
             request.Method == "POST" && request.At < now - 15_000)
             return null;
-        foreach (var expired in replay.Where(entry => entry.Value < now - 90_000).Select(entry => entry.Key).ToArray())
-            replay.Remove(expired);
-        if (replay.Count >= 1500 || !replay.TryAdd(id, now))
-            return null;
+        lock (replay)
+        {
+            foreach (var expired in replay.Where(entry => entry.Value < now - 90_000).Select(entry => entry.Key).ToArray())
+                replay.Remove(expired);
+            if (replay.Count >= 1500 || !replay.TryAdd(id, now))
+                return null;
+        }
         if (!Valid(request))
             return EncryptReply(id, 400, "");
 
@@ -254,6 +262,8 @@ internal sealed class CloudRelay : IAsyncDisposable
             deadline.CancelAfter(TimeSpan.FromSeconds(7));
             var callToken = deadline.Token;
             using var call = new HttpRequestMessage(new HttpMethod(request.Method), request.Path);
+            if (request.Phone)
+                call.Headers.Add("X-PC-Pulse-Phone", transport);
             using var response = await local.SendAsync(call, HttpCompletionOption.ResponseHeadersRead, callToken);
             var length = response.Content.Headers.ContentLength;
             if (length > MaxResponse)
@@ -280,9 +290,10 @@ internal sealed class CloudRelay : IAsyncDisposable
     {
         if (request.Method == "GET")
             return request.Path is "/v1/overview?sensors=true" or "/v1/overview?sensors=false"
-                or "/v1/processes" or "/v1/temperatures" or "/v1/thermal-protection";
+                or "/v1/processes" or "/v1/temperatures" or "/v1/thermal-protection" or "/v1/keyboard-temperature";
         return request.Method == "POST" && (request.Path is "/v1/cooling/automatic" or "/v1/cooling/maximum" ||
-            request.Path is not null && SavePath.IsMatch(request.Path));
+            request.Path is not null && (SavePath.IsMatch(request.Path) || ProcessActionPath.IsMatch(request.Path) ||
+                KeyboardPath.IsMatch(request.Path)));
     }
 
     private byte[] Decrypt(Envelope envelope)
@@ -372,7 +383,7 @@ internal sealed class CloudRelay : IAsyncDisposable
     }
 
     private sealed record Envelope(string Id, string Data);
-    private sealed record RelayRequest(string Method, string Path, long At);
+    private sealed record RelayRequest(string Method, string Path, long At, bool Phone);
     private sealed record RelayReply(int Status, string Body);
     private sealed record RelayPairing(string? Direct, string Origin, string DeviceId, string ClientKey, string DataKey);
 }

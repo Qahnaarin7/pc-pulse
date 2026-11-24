@@ -12,14 +12,32 @@ sealed class ThermalProtection : IAsyncDisposable
     private readonly SemaphoreSlim settingsChanged = new(0, 1);
     private readonly CancellationTokenSource stopping = new();
     private readonly Task monitor;
+    private readonly KeyboardTemperatureIndicator keyboard;
     private ProtectionSettings settings;
     private CoolingPolicy policy = new();
 
     public ThermalProtection(MetricsSampler sampler)
     {
         this.sampler = sampler;
+        keyboard = new KeyboardTemperatureIndicator(sampler);
         settings = Load();
         monitor = Task.Run(MonitorAsync);
+    }
+
+    public KeyboardStatus GetKeyboardStatus()
+    {
+        lock (gate) return keyboard.Read();
+    }
+
+    public KeyboardStatus? ConfigureKeyboard(KeyboardThresholds requested)
+    {
+        lock (gate)
+        {
+            var result = keyboard.Configure(requested);
+            if (result is not null && settingsChanged.CurrentCount == 0)
+                settingsChanged.Release();
+            return result;
+        }
     }
 
     public ProtectionStatus GetStatus()
@@ -80,9 +98,9 @@ sealed class ThermalProtection : IAsyncDisposable
         {
             while (!token.IsCancellationRequested)
             {
-                ProtectionSettings current;
-                lock (gate) current = settings;
-                if (current.Enabled && sampler.SupportsCooling())
+                bool active;
+                lock (gate) active = settings.Enabled && sampler.SupportsCooling() || keyboard.Enabled;
+                if (active)
                 {
                     Sample(token);
                     await settingsChanged.WaitAsync(Interval, token);
@@ -103,7 +121,7 @@ sealed class ThermalProtection : IAsyncDisposable
             var reading = sampler.ReadTemperatures();
             lock (gate)
             {
-                if (token.IsCancellationRequested || !settings.Enabled)
+                if (token.IsCancellationRequested)
                     return;
                 if (reading.SampledAt is not { } timestamp ||
                     (DateTimeOffset.UtcNow - timestamp).Duration() > Interval * 2)
@@ -111,11 +129,17 @@ sealed class ThermalProtection : IAsyncDisposable
                     policy.SensorUnavailable();
                     return;
                 }
-                var request = policy.Evaluate(settings, reading, Stopwatch.GetTimestamp());
-                if (request == FanRequest.None)
-                    return;
-                var result = sampler.SetCoolingMode(request == FanRequest.Maximum);
-                policy.Applied(request, result is not null);
+                if (settings.Enabled)
+                {
+                    var request = policy.Evaluate(settings, reading, Stopwatch.GetTimestamp());
+                    if (request != FanRequest.None)
+                    {
+                        var result = sampler.SetCoolingMode(request == FanRequest.Maximum);
+                        policy.Applied(request, result is not null);
+                    }
+                }
+                if (keyboard.Enabled)
+                    keyboard.Apply(reading);
             }
         }
         catch (Exception)
@@ -156,6 +180,8 @@ sealed class ThermalProtection : IAsyncDisposable
     {
         await stopping.CancelAsync();
         await monitor;
+        try { keyboard.Restore(); }
+        catch (Exception) { }
         settingsChanged.Dispose();
         stopping.Dispose();
     }

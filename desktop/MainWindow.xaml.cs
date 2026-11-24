@@ -1,5 +1,4 @@
 using System;
-using System.ComponentModel;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -18,25 +17,23 @@ public partial class MainWindow : Window
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string SettingsKey = @"Software\PcPulse";
     private const string AppName = "PC Pulse";
-    private readonly MetricsSampler sampler;
-    private readonly ThermalProtection protection;
-    private readonly int port;
+    private readonly DesktopBridge bridge;
     private readonly DispatcherTimer refresh;
     private CancellationTokenSource? request;
-    private PairingIdentity? identity;
-    private CloudRelay? relay;
+    private DesktopStatus? status;
+    private bool initializedRelay;
     private ProcessSnapshot? processes;
     private bool ramSort;
     private bool day;
     private string themeMode;
     private ProtectionSettings? lastProtection;
+    private KeyboardThresholds? lastKeyboard;
     private int tab;
+    private int settingsCategory;
 
-    internal MainWindow(MetricsSampler sampler, ThermalProtection protection, int port)
+    internal MainWindow(DesktopBridge bridge)
     {
-        this.sampler = sampler;
-        this.protection = protection;
-        this.port = port;
+        this.bridge = bridge;
         refresh = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         refresh.Tick += (_, _) => Refresh();
         InitializeComponent();
@@ -53,33 +50,33 @@ public partial class MainWindow : Window
         Activated += (_, _) => UpdateSystemTheme();
     }
 
-    internal void SetServer(PairingIdentity? currentIdentity, string message)
-    {
-        identity = currentIdentity;
-        ServerStatus.Text = message;
-        UpdateAddresses();
-    }
-
-    internal void SetRelay(CloudRelay bridge)
-    {
-        relay = bridge;
-        var current = bridge.ReadStatus();
-        RelayEnabled.IsChecked = current.Enabled;
-        RelayAddress.Text = current.Origin;
-        RelaySave.IsEnabled = true;
-        UpdateAddresses();
-    }
-
-    private void OnClosing(object? sender, CancelEventArgs args)
-    {
-        args.Cancel = true;
-        Hide();
-    }
-
     private void OnStateChanged(object? sender, EventArgs args)
     {
         if (WindowState == WindowState.Minimized)
-            Hide();
+            Dispatcher.BeginInvoke(() => { if (WindowState == WindowState.Minimized && IsLoaded) Close(); });
+    }
+
+    protected override void OnClosed(EventArgs args)
+    {
+        refresh.Stop();
+        CancelRefresh();
+        SystemEvents.UserPreferenceChanged -= OnSystemPreference;
+        base.OnClosed(args);
+    }
+
+    private void RenderStatus(DesktopStatus current)
+    {
+        status = current;
+        ServerStatus.Text = current.Server;
+        var route = current.Phone;
+        PhoneStatus.Text = route is null ? "Телефон від’єднано" : $"Телефон підключено · {route}";
+        PhoneStatus.SetResourceReference(TextBlock.ForegroundProperty, route is null ? "Muted" : "Accent");
+        if (tab == 2)
+        {
+            UpdateAddresses();
+            RenderProtection(current.Protection);
+            RenderKeyboard(current.Keyboard);
+        }
     }
 
     private void OnVisibilityChanged(object sender, DependencyPropertyChangedEventArgs args)
@@ -100,6 +97,16 @@ public partial class MainWindow : Window
     private void ProcessesClicked(object sender, RoutedEventArgs args) => SelectTab(1);
     private void SettingsClicked(object sender, RoutedEventArgs args) => SelectTab(2);
 
+    private void SettingsCategoryClicked(object sender, RoutedEventArgs args)
+    {
+        settingsCategory = int.Parse((string)((Button)sender).Tag);
+        ConnectionSettings.Visibility = settingsCategory == 0 ? Visibility.Visible : Visibility.Collapsed;
+        HardwareSettings.Visibility = settingsCategory == 1 ? Visibility.Visible : Visibility.Collapsed;
+        AppearanceSettings.Visibility = settingsCategory == 2 ? Visibility.Visible : Visibility.Collapsed;
+        SettingsScroll.ScrollToTop();
+        UpdateButtons();
+    }
+
     private void SelectTab(int index)
     {
         tab = index;
@@ -116,31 +123,34 @@ public partial class MainWindow : Window
     {
         if (!IsVisible || request is not null)
             return;
-        if (tab == 2)
-        {
-            UpdateAddresses();
-            RenderProtection(protection.GetStatus());
-            return;
-        }
-
         var current = new CancellationTokenSource();
         request = current;
         try
         {
             if (tab == 0)
             {
-                var data = await Task.Run(() => sampler.ReadOverview(true), current.Token);
-                if (!current.IsCancellationRequested && IsVisible)
-                    RenderOverview(data);
+                var reply = await bridge.SendAsync<DesktopOverview>(new DesktopCommand("overview"), current.Token);
+                if (!current.IsCancellationRequested && IsVisible && reply is not null)
+                {
+                    RenderStatus(reply.Status);
+                    RenderOverview(reply.Data);
+                }
+            }
+            else if (tab == 1)
+            {
+                var reply = await bridge.SendAsync<DesktopProcesses>(new DesktopCommand("processes"), current.Token);
+                if (!current.IsCancellationRequested && IsVisible && reply is not null)
+                {
+                    RenderStatus(reply.Status);
+                    processes = reply.Data;
+                    SortProcesses();
+                }
             }
             else
             {
-                var data = await Task.Run(() => sampler.ReadProcessesAsync(current.Token), current.Token);
-                if (!current.IsCancellationRequested && IsVisible)
-                {
-                    processes = data;
-                    SortProcesses();
-                }
+                var reply = await bridge.SendAsync<DesktopStatus>(new DesktopCommand("status"), current.Token);
+                if (!current.IsCancellationRequested && IsVisible && reply is not null)
+                    RenderStatus(reply);
             }
         }
         catch (OperationCanceledException) { }
@@ -149,7 +159,8 @@ public partial class MainWindow : Window
             if (!current.IsCancellationRequested)
             {
                 if (tab == 0) UpdatedAt.Text = "Показники тимчасово недоступні.";
-                else ProcessSummary.Text = "Список процесів тимчасово недоступний.";
+                else if (tab == 1) ProcessSummary.Text = "Список процесів тимчасово недоступний.";
+                else ServerStatus.Text = "Агент тимчасово недоступний.";
             }
         }
         finally
@@ -200,7 +211,7 @@ public partial class MainWindow : Window
             _ => "Режим недоступний"
         };
         CoolingText.Text = $"{mode} · CPU {cooling.CpuFanRpm?.ToString() ?? "—"} · GPU {cooling.GpuFanRpm?.ToString() ?? "—"} об/хв";
-        var protectedMode = protection.GetStatus().State is "maximum" or "critical" or "recovering";
+        var protectedMode = status?.Protection.State is "maximum" or "critical" or "recovering";
         AutoFans.IsEnabled = cooling.CanControl && cooling.Mode != "automatic" && !protectedMode;
         MaxFans.IsEnabled = cooling.CanControl && cooling.Mode != "maximum";
     }
@@ -213,7 +224,7 @@ public partial class MainWindow : Window
         AutoFans.IsEnabled = MaxFans.IsEnabled = false;
         try
         {
-            var cooling = await Task.Run(() => protection.SetManualMode(maximum));
+            var cooling = await bridge.SendAsync<CoolingResponse>(new DesktopCommand("fans", maximum));
             if (cooling is null) CoolingText.Text = "Термозахист або Control Center утримує поточний режим.";
             else RenderCooling(cooling);
         }
@@ -245,12 +256,53 @@ public partial class MainWindow : Window
         var sorted = ramSort
             ? filtered.OrderByDescending(process => process.WorkingSetBytes).ThenBy(process => process.Pid)
             : filtered.OrderByDescending(process => process.CpuPercent ?? -1).ThenBy(process => process.Pid);
+        var previous = ProcessList.SelectedItem as ProcessRow;
         var rows = sorted.Select(process => new ProcessRow(process.Name, process.Pid,
-            process.CpuPercent is { } cpu ? $"{cpu:F1} %" : "—", Bytes(process.WorkingSetBytes))).ToArray();
+            process.CpuPercent is { } cpu ? $"{cpu:F1} %" : "—", Bytes(process.WorkingSetBytes), process.Started)).ToArray();
         ProcessList.ItemsSource = rows;
+        if (previous?.Started is { } started)
+            ProcessList.SelectedItem = rows.FirstOrDefault(row => row.Pid == previous.Pid && row.Started == started);
         var window = list.CpuWindowSeconds is { } seconds ? $" · CPU за {seconds:F1} с" : "";
         var metric = ramSort ? "Пам’ять" : "CPU";
         ProcessSummary.Text = $"{metric} · {rows.Length} процесів{window} · {list.SampledAt.LocalDateTime:HH:mm:ss}";
+    }
+
+    private void ProcessSelectionChanged(object sender, SelectionChangedEventArgs args) =>
+        TerminateProcessButton.IsEnabled = ProcessList.SelectedItem is ProcessRow { Started: > 0 };
+
+    private async void TerminateProcessClicked(object sender, RoutedEventArgs args)
+    {
+        if (ProcessList.SelectedItem is not ProcessRow { Started: { } started } selected)
+            return;
+        var prompt = $"Завершити {selected.Name} (PID {selected.Pid})? Незбережені дані можуть бути втрачені.";
+        if (MessageBox.Show(this, prompt, "Завершити процес", MessageBoxButton.YesNo, MessageBoxImage.Warning,
+                MessageBoxResult.No) != MessageBoxResult.Yes)
+            return;
+        TerminateProcessButton.IsEnabled = false;
+        try
+        {
+            var reply = await bridge.SendAsync<ProcessAction>(new DesktopCommand("terminate", Pid: selected.Pid, Started: started));
+            if (reply?.Result == "ended")
+            {
+                CancelRefresh();
+                Refresh();
+            }
+            else
+            {
+                var message = reply?.Result switch
+                {
+                    "changed" => "Процес змінився. Оновіть список і виберіть його знову.",
+                    "protected" => "Цей процес захищено.",
+                    _ => "Windows не підтвердила завершення процесу."
+                };
+                MessageBox.Show(this, message, "Завершити процес", MessageBoxButton.OK);
+            }
+        }
+        catch (Exception)
+        {
+            MessageBox.Show(this, "Агент не зміг завершити процес.", "Завершити процес", MessageBoxButton.OK);
+        }
+        finally { TerminateProcessButton.IsEnabled = ProcessList.SelectedItem is ProcessRow { Started: > 0 }; }
     }
 
     private void UpdateAddresses()
@@ -258,32 +310,48 @@ public partial class MainWindow : Window
         var addresses = MonitorServer.PrivateAddresses();
         AddressList.Text = addresses.Count == 0 ? "Активних локальних IPv4-адрес поки немає."
             : string.Join("   ·   ", addresses.Select(a => $"{a.Adapter} {a.Address}"));
-        var status = relay?.ReadStatus();
-        CopyCodeButton.IsEnabled = identity is not null && addresses.Count > 0;
-        CopyRelayCodeButton.IsEnabled = identity is not null && status?.CanPair == true;
-        RelayStatus.Text = status?.State switch
+        var relay = status?.Relay;
+        if (!initializedRelay && relay is not null)
+        {
+            RelayEnabled.IsChecked = relay.Enabled;
+            RelayAddress.Text = relay.Origin;
+            RelaySave.IsEnabled = true;
+            initializedRelay = true;
+        }
+        CopyCodeButton.IsEnabled = status?.CanPair == true && addresses.Count > 0;
+        CopyRelayCodeButton.IsEnabled = status?.CanPair == true && relay?.CanPair == true;
+        RelayStatus.Text = relay?.State switch
         {
             "online" => "Cloudflare підключено. У PC Pulse на телефоні відкрийте «Налаштування», вставте код і збережіть підключення.",
             "connecting" => "Підключення до Cloudflare…",
             "offline" => "Cloudflare не відповів. Перевірте адресу й ключ реєстрації.",
             _ => "Cloudflare вимкнено. Відкрийте налаштування ретранслятора, щоб додати Worker."
         };
+        var bluetooth = status?.Bluetooth;
+        BluetoothEnabled.IsEnabled = bluetooth is not null;
+        BluetoothEnabled.IsChecked = bluetooth?.Enabled == true;
+        CopyBluetoothCodeButton.IsEnabled = bluetooth?.State == "ready";
+        BluetoothState.Text = bluetooth?.State switch
+        {
+            "ready" => "Готово. Скопіюйте код у застосунок Android.",
+            "starting" => "Запуск Bluetooth…",
+            "unavailable" => "Адаптер недоступний. Увімкніть Bluetooth у Windows і повторіть спробу.",
+            _ => "Вимкнено."
+        };
     }
 
-    private void CopyCodeClicked(object sender, RoutedEventArgs args) => CopyPairingCode(false, CopyFeedback);
-    private void CopyRelayCodeClicked(object sender, RoutedEventArgs args) => CopyPairingCode(true, CopyRelayFeedback);
+    private async void CopyCodeClicked(object sender, RoutedEventArgs args) => await CopyPairingCode(false, CopyFeedback);
+    private async void CopyRelayCodeClicked(object sender, RoutedEventArgs args) => await CopyPairingCode(true, CopyRelayFeedback);
+    private async void CopyBluetoothCodeClicked(object sender, RoutedEventArgs args) =>
+        await CopyPairingCode(false, CopyBluetoothFeedback, "pair-bluetooth");
 
-    private void CopyPairingCode(bool cloud, TextBlock feedback)
+    private async Task CopyPairingCode(bool cloud, TextBlock feedback, string command = "pair")
     {
-        var addresses = MonitorServer.PrivateAddresses();
-        if (identity is null)
-            return;
-        var direct = addresses.Count > 0 ? identity.CreateCode(addresses, port) : null;
-        var code = cloud ? relay?.PhoneCode(direct) : direct;
-        if (code is null)
-            return;
         try
         {
+            var code = await bridge.SendAsync<string>(new DesktopCommand(command, cloud));
+            if (code is null)
+                return;
             Clipboard.SetText(code);
             feedback.Text = "Код скопійовано. Вставте його в PC Pulse на телефоні.";
         }
@@ -291,18 +359,36 @@ public partial class MainWindow : Window
         {
             feedback.Text = "Буфер обміну зайнятий. Спробуйте ще раз.";
         }
+        catch (Exception)
+        {
+            feedback.Text = "Не вдалося отримати код від агента.";
+        }
     }
 
-    private void SaveRelayClicked(object sender, RoutedEventArgs args)
+    private async void BluetoothClicked(object sender, RoutedEventArgs args)
     {
-        if (relay is null)
-            return;
+        BluetoothEnabled.IsEnabled = false;
         try
         {
-            relay.Configure(RelayEnabled.IsChecked == true, RelayAddress.Text, RelayEnrollment.Password.Trim());
+            var result = await bridge.SendAsync<DesktopStatus>(new DesktopCommand("bluetooth", BluetoothEnabled.IsChecked == true));
+            if (result is not null)
+                RenderStatus(result);
+        }
+        catch (Exception) { BluetoothState.Text = "Агент не підтвердив зміну Bluetooth."; }
+        finally { BluetoothEnabled.IsEnabled = true; }
+    }
+
+    private async void SaveRelayClicked(object sender, RoutedEventArgs args)
+    {
+        RelaySave.IsEnabled = false;
+        try
+        {
+            var result = await bridge.SendAsync<DesktopStatus>(new DesktopCommand("relay", RelayEnabled.IsChecked == true,
+                Address: RelayAddress.Text, Enrollment: RelayEnrollment.Password.Trim()));
             RelayEnrollment.Clear();
             RelayFeedback.Text = "Налаштування збережено.";
-            UpdateAddresses();
+            if (result is not null)
+                RenderStatus(result);
         }
         catch (ArgumentException error)
         {
@@ -312,6 +398,7 @@ public partial class MainWindow : Window
         {
             RelayFeedback.Text = "Не вдалося зберегти налаштування Cloudflare.";
         }
+        finally { RelaySave.IsEnabled = true; }
     }
 
     private void AutoStartClicked(object sender, RoutedEventArgs args)
@@ -344,7 +431,7 @@ public partial class MainWindow : Window
         SaveProtection.IsEnabled = false;
         try
         {
-            var configured = await Task.Run(() => protection.Configure(requested));
+            var configured = await bridge.SendAsync<ProtectionStatus>(new DesktopCommand("thermal", Protection: requested));
             if (configured is null)
                 ProtectionFeedback.Text = "ПК не підтвердив доступ до режиму максимальних обертів.";
             else
@@ -360,7 +447,7 @@ public partial class MainWindow : Window
         }
         finally
         {
-            SaveProtection.IsEnabled = protection.GetStatus().Supported;
+            SaveProtection.IsEnabled = status?.Protection.Supported == true;
         }
     }
 
@@ -387,6 +474,58 @@ public partial class MainWindow : Window
             "unconfirmed" => "Control Center ще не підтвердив зміну режиму.",
             _ => "Очікування показників датчиків."
         };
+    }
+
+    private void RenderKeyboard(KeyboardStatus value)
+    {
+        var settings = value.Settings;
+        if (lastKeyboard != settings)
+        {
+            KeyboardEnabled.IsChecked = settings.Enabled;
+            CpuWarm.Text = settings.CpuWarm.ToString();
+            CpuHot.Text = settings.CpuHot.ToString();
+            GpuWarm.Text = settings.GpuWarm.ToString();
+            GpuHot.Text = settings.GpuHot.ToString();
+            lastKeyboard = settings;
+        }
+        KeyboardEnabled.IsEnabled = CpuWarm.IsEnabled = CpuHot.IsEnabled = GpuWarm.IsEnabled = GpuHot.IsEnabled =
+            SaveKeyboard.IsEnabled = value.Supported;
+        KeyboardState.Text = value.State switch
+        {
+            "green" => "Зелений · нижче жовтих порогів",
+            "yellow" => "Жовтий · підвищена температура",
+            "red" => "Червоний · досягнуто червоного порога",
+            "unsupported" => "На цьому ПК керування підсвіткою недоступне.",
+            "off" => "Вимкнено. Клавіатура використовує збережений колір.",
+            "unavailable" => "Драйвер поки не підтвердив зміну кольору.",
+            _ => "Очікування температури…"
+        };
+    }
+
+    private async void SaveKeyboardClicked(object sender, RoutedEventArgs args)
+    {
+        if (!int.TryParse(CpuWarm.Text, out var cpuWarm) || !int.TryParse(CpuHot.Text, out var cpuHot) ||
+            !int.TryParse(GpuWarm.Text, out var gpuWarm) || !int.TryParse(GpuHot.Text, out var gpuHot))
+        {
+            KeyboardFeedback.Text = "Введіть цілі числа в усіх чотирьох полях.";
+            return;
+        }
+        var settings = new KeyboardThresholds(KeyboardEnabled.IsChecked == true, cpuWarm, cpuHot, gpuWarm, gpuHot);
+        if (!settings.IsValid)
+        {
+            KeyboardFeedback.Text = "Жовтий поріг має бути нижчим. Межі CPU 35–100 °C і GPU 35–95 °C.";
+            return;
+        }
+        SaveKeyboard.IsEnabled = false;
+        try
+        {
+            var result = await bridge.SendAsync<KeyboardStatus>(new DesktopCommand("keyboard", Keyboard: settings));
+            if (result is not null)
+                RenderKeyboard(result);
+            KeyboardFeedback.Text = result is null ? "ПК не підтвердив налаштування." : "Пороги збережено.";
+        }
+        catch (Exception) { KeyboardFeedback.Text = "Не вдалося зберегти пороги."; }
+        finally { SaveKeyboard.IsEnabled = status?.Keyboard.Supported == true; }
     }
 
     private void SystemClicked(object sender, RoutedEventArgs args) => SetTheme("system");
@@ -425,16 +564,15 @@ public partial class MainWindow : Window
         ApplyTheme();
     }
 
-    internal void StopWatchingTheme() => SystemEvents.UserPreferenceChanged -= OnSystemPreference;
 
     private void ApplyTheme()
     {
-        var near = ColorOf(day ? "#DFEEFC" : "#25354F");
-        var far = ColorOf(day ? "#F5F8FC" : "#171C2E");
+        var near = ColorOf(day ? "#EBF1F8" : "#1D252F");
+        var far = ColorOf(day ? "#F8FAFD" : "#11151D");
         Resources["Back"] = new LinearGradientBrush(near, far, 145);
-        Brush("Panel", day ? "#F8FBFF" : "#253249");
-        Brush("Field", day ? "#E8F0FA" : "#2C3C54");
-        Brush("Line", day ? "#C8D6E6" : "#3C4F6A");
+        Brush("Panel", day ? "#FCFDFF" : "#212B36");
+        Brush("Field", day ? "#F0F4FA" : "#293747");
+        Brush("Line", day ? "#D5DFEA" : "#3A4858");
         Brush("Ink", day ? "#19283A" : "#F1F5FC");
         Brush("Muted", day ? "#46586E" : "#B8C5DB");
         Brush("Primary", day ? "#075DB6" : "#1468B8");
@@ -465,6 +603,9 @@ public partial class MainWindow : Window
         SelectStyle(NightTheme, themeMode == "night");
         SelectStyle(SortCpu, !ramSort);
         SelectStyle(SortRam, ramSort);
+        SelectStyle(ConnectionCategory, settingsCategory == 0);
+        SelectStyle(HardwareCategory, settingsCategory == 1);
+        SelectStyle(AppearanceCategory, settingsCategory == 2);
     }
 
     private void SelectStyle(Button button, bool selected) =>
@@ -485,5 +626,5 @@ public partial class MainWindow : Window
         "administrator_required" => "Драйвер потребує прав адміністратора",
         _ => "Датчик недоступний"
     };
-    private sealed record ProcessRow(string Name, int Pid, string Cpu, string Memory);
+    private sealed record ProcessRow(string Name, int Pid, string Cpu, string Memory, ulong? Started);
 }

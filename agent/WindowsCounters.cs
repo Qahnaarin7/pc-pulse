@@ -1,8 +1,10 @@
 using System.Runtime.InteropServices;
+using System.Text;
 
 static class WindowsCounters
 {
     private const uint QueryLimitedInformation = 0x1000;
+    private const uint TerminateAccess = 0x0001;
 
     public static CpuTimes? ReadCpu()
     {
@@ -35,6 +37,31 @@ static class WindowsCounters
         return GlobalMemoryStatusEx(ref status)
             ? new MemoryEntry(status.TotalPhysical - status.AvailablePhysical, status.TotalPhysical)
             : null;
+    }
+
+    public static string TryTerminate(int pid, ulong identity)
+    {
+        if (pid <= 4 || pid == Environment.ProcessId || identity == 0)
+            return "protected";
+        if (!ProcessIdToSessionId(Environment.ProcessId, out var ownSession) ||
+            !ProcessIdToSessionId(pid, out var targetSession) || targetSession != ownSession)
+            return "unavailable";
+        var handle = OpenProcess(TerminateAccess | QueryLimitedInformation, false, pid);
+        if (handle == IntPtr.Zero)
+            return "unavailable";
+        try
+        {
+            if (!GetProcessTimes(handle, out var created, out _, out _, out _) || created.Ticks != identity)
+                return "changed";
+            var filename = new StringBuilder(32768);
+            var length = (uint)filename.Capacity;
+            if (!IsProcessCritical(handle, out var critical) || critical ||
+                !QueryFullProcessImageName(handle, 0, filename, ref length) ||
+                Path.GetFileName(filename.ToString()).StartsWith("PcPulse.", StringComparison.OrdinalIgnoreCase))
+                return "protected";
+            return TerminateProcess(handle, 1) ? "ended" : "unavailable";
+        }
+        finally { CloseHandle(handle); }
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -78,6 +105,22 @@ static class WindowsCounters
     [DllImport("kernel32.dll", ExactSpelling = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ProcessIdToSessionId(int processId, out uint sessionId);
+
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsProcessCritical(IntPtr process, [MarshalAs(UnmanagedType.Bool)] out bool critical);
+
+    [DllImport("kernel32.dll", EntryPoint = "QueryFullProcessImageNameW", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryFullProcessImageName(IntPtr process, int flags, StringBuilder path, ref uint size);
+
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool TerminateProcess(IntPtr process, uint exitCode);
 }
 
 readonly record struct CpuTimes(ulong Idle, ulong Total);

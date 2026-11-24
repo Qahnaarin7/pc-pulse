@@ -6,6 +6,7 @@ sealed class GigabyteCooling : IDisposable
     private const int ReadTelemetryCommand = 12;
     private const int ReadCapabilitiesCommand = 13;
     private const int SetFanModeCommand = 121;
+    private const int SetKeyboardColorCommand = 103;
     private const int SettingReadSucceeded = 4096;
     private const int FanModePage = 4;
     private const int FanModeOffset = 5;
@@ -15,6 +16,7 @@ sealed class GigabyteCooling : IDisposable
     private readonly ReadBuffer readBuffer;
     private readonly ReadSetting readSetting;
     private readonly WriteCommand writeCommand;
+    public bool SupportsKeyboard { get; private set; }
 
     private GigabyteCooling(nint library)
     {
@@ -56,6 +58,7 @@ sealed class GigabyteCooling : IDisposable
             var capabilities = new byte[256];
             accepted = cooling.readBuffer(ReadCapabilitiesCommand, capabilities) == ReadCapabilitiesCommand &&
                 capabilities[12] == 2;
+            cooling.SupportsKeyboard = accepted && capabilities[15] == 6;
             return accepted ? cooling : null;
         }
         catch (EntryPointNotFoundException)
@@ -112,6 +115,22 @@ sealed class GigabyteCooling : IDisposable
         return applied?.Mode == mode ? applied : null;
     }
 
+    public bool SetKeyboardColor(KeyboardColor color)
+    {
+        if (!SupportsKeyboard)
+            return false;
+        // The one-zone OEM protocol uses half-scale components in G, R, B order.
+        var payload = new[] { (byte)(color.Green / 2), (byte)(color.Red / 2), (byte)(color.Blue / 2), (byte)0xF0 };
+        return writeCommand(SetKeyboardColorCommand, payload, payload.Length) == SetKeyboardColorCommand;
+    }
+
+    public bool RestoreKeyboardColor()
+    {
+        var saved = new byte[3];
+        return SupportsKeyboard && readSetting(2, 81, saved.Length, saved) == SettingReadSucceeded &&
+            SetKeyboardColor(new KeyboardColor(saved[0], saved[1], saved[2]));
+    }
+
     private byte? ReadSettingByte(int page, int offset)
     {
         var value = new byte[] { 255 };
@@ -146,3 +165,4 @@ sealed class GigabyteCooling : IDisposable
 
 sealed record GigabyteTelemetry(float CpuTemperatureC, CoolingResponse Cooling);
 sealed record CoolingResponse(string Mode, bool CanControl, int? CpuFanRpm, int? GpuFanRpm);
+readonly record struct KeyboardColor(byte Red, byte Green, byte Blue);

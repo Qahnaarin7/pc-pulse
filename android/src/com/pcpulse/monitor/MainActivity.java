@@ -65,6 +65,7 @@ public final class MainActivity extends Activity {
     private static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT;
     private static final int WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;
     private static final int NOTIFICATION_PERMISSION = 19;
+    private static final int BLUETOOTH_PERMISSION = 20;
     private static final Locale UK = Locale.forLanguageTag("uk-UA");
     private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm:ss");
 
@@ -84,6 +85,7 @@ public final class MainActivity extends Activity {
     };
     private boolean connectivityRegistered;
     private SharedPreferences preferences;
+    private SavedComputers computers;
     private PulsePalette palette;
     private boolean day;
     private String themeMode;
@@ -93,7 +95,9 @@ public final class MainActivity extends Activity {
     private int failures;
     private boolean resumed;
     private Runnable refreshProtection;
+    private Runnable refreshKeyboard;
     private boolean setup;
+    private int settingsSection;
     private boolean processes;
     private boolean sensors;
     private boolean sortByRam;
@@ -137,14 +141,14 @@ public final class MainActivity extends Activity {
         setTheme(day ? R.style.PulseThemeDay : R.style.PulseTheme);
         super.onCreate(state);
         sensors = preferences.getBoolean("sensors", true);
-        try {
-            pc = PcConnection.fromCode(preferences.getString("pairing", ""));
-        } catch (IllegalArgumentException ignored) {
-            pc = null;
+        computers = new SavedComputers(preferences);
+        if (computers.selected() != null) {
+            pc = PcConnection.fromCode(computers.selected().code);
         }
         processes = state != null && state.getBoolean("processes");
         sortByRam = state != null && state.getBoolean("sortByRam");
         setup = pc == null || state != null && state.getBoolean("setup");
+        settingsSection = state == null ? 0 : state.getInt("settingsSection");
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         if (Build.VERSION.SDK_INT >= 30) {
             getWindow().setDecorFitsSystemWindows(false);
@@ -164,6 +168,7 @@ public final class MainActivity extends Activity {
         state.putBoolean("processes", processes);
         state.putBoolean("sortByRam", sortByRam);
         state.putBoolean("setup", setup);
+        state.putInt("settingsSection", settingsSection);
         super.onSaveInstanceState(state);
     }
 
@@ -175,6 +180,9 @@ public final class MainActivity extends Activity {
             restartPolling();
         } else if (refreshProtection != null) {
             handler.post(refreshProtection);
+        }
+        if (setup && refreshKeyboard != null) {
+            handler.post(refreshKeyboard);
         }
     }
 
@@ -202,12 +210,18 @@ public final class MainActivity extends Activity {
         if (refreshProtection != null) {
             handler.removeCallbacks(refreshProtection);
         }
+        if (refreshKeyboard != null) {
+            handler.removeCallbacks(refreshKeyboard);
+        }
         stopPolling();
         super.onPause();
     }
 
     @Override protected void onDestroy() {
         network.shutdownNow();
+        if (pc != null) {
+            pc.close();
+        }
         super.onDestroy();
     }
 
@@ -254,14 +268,19 @@ public final class MainActivity extends Activity {
         if (!setup) {
             header.addView(button("Налаштування", false, () -> {
                 setup = true;
+                settingsSection = 0;
                 stopPolling();
                 render();
             }), new LinearLayout.LayoutParams(WRAP, WRAP));
+        } else if (pc != null) {
+            header.addView(button("Огляд", false, this::openDashboard), new LinearLayout.LayoutParams(WRAP, WRAP));
         }
         root.addView(header, new LinearLayout.LayoutParams(MATCH, WRAP));
     }
 
     private void renderSetup() {
+        refreshProtection = null;
+        refreshKeyboard = null;
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         root.addView(scroll, new LinearLayout.LayoutParams(MATCH, 0, 1));
@@ -273,7 +292,22 @@ public final class MainActivity extends Activity {
             add(content, label("Скопіюйте код із PC Pulse на Windows. Підключення можливе через Wi-Fi, VPN або Cloudflare.",
                     16, palette.muted, false), 10);
         } else {
-            add(content, button("До огляду", false, this::openDashboard), 12);
+            LinearLayout menu = row();
+            menu.addView(button("З’єднання", settingsSection == 0, () -> showSettingsSection(0)), weighted());
+            menu.addView(button("Обладнання", settingsSection == 1, () -> showSettingsSection(1)), weighted());
+            menu.addView(button("Система", settingsSection == 2, () -> showSettingsSection(2)), weighted());
+            add(content, menu, 12);
+            if (settingsSection == 1) {
+                renderProtectionSettings(content);
+                renderKeyboardSettings(content);
+                return;
+            }
+            if (settingsSection == 2) {
+                renderAlertSettings(content);
+                renderAppearance(content);
+                return;
+            }
+            add(content, button("Збережені ПК", false, this::chooseComputer), 12);
         }
 
         LinearLayout form = card();
@@ -289,6 +323,18 @@ public final class MainActivity extends Activity {
         input.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
         input.setContentDescription("Код підключення");
         add(form, input, 8);
+        EditText name = input("Назва ПК · необов’язково");
+        name.setSingleLine(true);
+        name.setContentDescription("Назва ПК");
+        name.setFilters(new android.text.InputFilter[] {new android.text.InputFilter.LengthFilter(48)});
+        add(form, name, 8);
+        Switch replace = new Switch(this);
+        if (pc != null) {
+            replace.setText("Оновити код вибраного ПК");
+            replace.setTextColor(palette.text);
+            styleSwitch(replace);
+            add(form, replace, 8);
+        }
         add(form, button("Вставити код", false, () -> {
             ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             ClipData clip = clipboard.getPrimaryClip();
@@ -313,9 +359,8 @@ public final class MainActivity extends Activity {
             String code = input.getText().toString().replaceAll("\\s+", "");
             try {
                 if (!code.isEmpty() || pc == null) {
-                    pc = PcConnection.fromCode(code);
-                    host = null;
-                    preferences.edit().putString("pairing", code).apply();
+                    computers.save(code, name.getText().toString().trim(), replace.isChecked());
+                    loadSelectedComputer();
                 }
             } catch (IllegalArgumentException invalid) {
                 error.setText(invalid.getMessage());
@@ -327,22 +372,107 @@ public final class MainActivity extends Activity {
             ((InputMethodManager) getSystemService(INPUT_METHOD_SERVICE))
                     .hideSoftInputFromWindow(input.getWindowToken(), 0);
             openDashboard();
+            requestBluetoothPermission();
         }), 10);
         if (pc != null) {
-            add(form, label(pc.hasCloudflare() ? "Cloudflare налаштовано" : "Підключення через Wi-Fi / VPN",
+            String channels = pc.hasBluetooth() ? "Bluetooth" + (pc.hasCloudflare() ? " · Cloudflare" : "")
+                    : pc.hasCloudflare() ? "Cloudflare налаштовано" : "Підключення через Wi-Fi / VPN";
+            add(form, label(channels,
                     13, palette.muted, false), 12);
-            renderProtectionSettings(content);
-            renderAlertSettings(content);
-            LinearLayout appearance = card();
-            add(appearance, label("Тема", 17, palette.text, true), 0);
-            LinearLayout choices = row();
-            choices.addView(button("За системою", "system".equals(themeMode), () -> changeTheme("system")), weighted());
-            addThemeChoice(choices, "День", "day");
-            addThemeChoice(choices, "Ніч", "night");
-            add(appearance, choices, 9);
-            add(content, appearance, 14);
+            if (pc.hasBluetooth() && Build.VERSION.SDK_INT >= 31 &&
+                    checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                add(form, button("Дозволити Bluetooth", false, this::requestBluetoothPermission), 8);
+            }
         } else {
             add(content, label("Код дає доступ до показників ПК. Зберігайте його як пароль.", 14, palette.muted, false), 18);
+        }
+    }
+
+    private void showSettingsSection(int section) {
+        settingsSection = section;
+        render();
+    }
+
+    private void renderAppearance(LinearLayout content) {
+        LinearLayout appearance = card();
+        add(appearance, label("Тема", 17, palette.text, true), 0);
+        LinearLayout choices = row();
+        choices.addView(button("За системою", "system".equals(themeMode), () -> changeTheme("system")), weighted());
+        addThemeChoice(choices, "День", "day");
+        addThemeChoice(choices, "Ніч", "night");
+        add(appearance, choices, 9);
+        add(content, appearance, 14);
+    }
+
+    private void chooseComputer() {
+        List<SavedComputers.Computer> items = computers.list();
+        if (items.isEmpty()) {
+            return;
+        }
+        String[] names = new String[items.size()];
+        int selected = 0;
+        for (int index = 0; index < items.size(); index++) {
+            SavedComputers.Computer item = items.get(index);
+            names[index] = item.name.isEmpty() ? "Комп’ютер " + (index + 1) : item.name;
+            if (item == computers.selected()) {
+                selected = index;
+            }
+        }
+        new android.app.AlertDialog.Builder(this).setTitle("Збережені ПК")
+                .setSingleChoiceItems(names, selected, (dialog, index) -> {
+                    dialog.dismiss();
+                    computers.select(items.get(index));
+                    loadSelectedComputer();
+                    openDashboard();
+                }).setNegativeButton("Закрити", null)
+                .setNeutralButton("Забути вибраний", (dialog, ignored) -> forgetComputer()).show();
+    }
+
+    private void forgetComputer() {
+        SavedComputers.Computer active = computers.selected();
+        if (active == null) {
+            return;
+        }
+        new android.app.AlertDialog.Builder(this).setTitle("Забути вибраний ПК?")
+                .setMessage("Щоб підключити цей ПК знову, знадобиться його код.")
+                .setNegativeButton("Скасувати", null).setPositiveButton("Забути", (dialog, ignored) -> {
+                    computers.forget(active);
+                    loadSelectedComputer();
+                    if (pc == null) {
+                        setup = true;
+                        render();
+                    } else {
+                        openDashboard();
+                    }
+                }).show();
+    }
+
+    private void loadSelectedComputer() {
+        stopPolling();
+        if (pc != null) {
+            pc.close();
+        }
+        SavedComputers.Computer active = computers.selected();
+        pc = active == null ? null : PcConnection.fromCode(active.code);
+        Intent alertService = new Intent(this, ThermalAlertService.class);
+        if (pc == null) {
+            stopService(alertService);
+        } else if (preferences.getBoolean(ThermalAlertService.ENABLED, false) &&
+                getSystemService(NotificationManager.class).areNotificationsEnabled()) {
+            try { startForegroundService(alertService); }
+            catch (IllegalStateException | SecurityException ignored) { }
+        }
+        host = null;
+        processes = false;
+        processWindow = Double.NaN;
+        allProcesses = Collections.emptyList();
+        search = "";
+    }
+
+    private void requestBluetoothPermission() {
+        if (pc != null && pc.hasBluetooth() && Build.VERSION.SDK_INT >= 31 &&
+                checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[] {Manifest.permission.BLUETOOTH_CONNECT}, BLUETOOTH_PERMISSION);
         }
     }
 
@@ -513,6 +643,137 @@ public final class MainActivity extends Activity {
         return "ПК не відповідає. Перевірте, чи запущено PC Pulse на Windows.";
     }
 
+    private void renderKeyboardSettings(LinearLayout content) {
+        PcConnection endpoint = pc;
+        LinearLayout form = card();
+        add(content, form, 14);
+        add(form, label("Температура кольором клавіатури", 18, palette.text, true), 0);
+        Switch enabled = new Switch(this);
+        enabled.setText("Показувати нагрів підсвіткою");
+        enabled.setTextColor(palette.text);
+        enabled.setMinHeight(dp(48));
+        styleSwitch(enabled);
+        add(form, enabled, 7);
+        LinearLayout cpu = row();
+        LinearLayout gpu = row();
+        EditText[] input = {addProtectionThreshold(cpu, "CPU · жовтий, °C"), addProtectionThreshold(cpu, "CPU · червоний, °C"),
+                addProtectionThreshold(gpu, "GPU · жовтий, °C"), addProtectionThreshold(gpu, "GPU · червоний, °C")};
+        add(form, cpu, 8);
+        add(form, gpu, 8);
+        TextView note = label("Перевіряю підтримку…", 13, palette.muted, false);
+        note.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        add(form, note, 9);
+        String[] keys = {"cpuWarm", "cpuHot", "gpuWarm", "gpuHot"};
+        JSONObject[] applied = {null};
+        boolean[] saving = {false};
+        TextView save = button("Зберегти пороги кольорів", true, () -> {
+            if (saving[0]) {
+                return;
+            }
+            int[] thresholds = new int[input.length];
+            try {
+                for (int i = 0; i < input.length; i++) {
+                    thresholds[i] = Integer.parseInt(input[i].getText().toString());
+                }
+                if (thresholds[0] < 35 || thresholds[0] >= thresholds[1] || thresholds[1] > 100 ||
+                        thresholds[2] < 35 || thresholds[2] >= thresholds[3] || thresholds[3] > 95) {
+                    throw new NumberFormatException();
+                }
+            } catch (NumberFormatException error) {
+                note.setText("Жовтий поріг має бути нижчим. Межі CPU 35–100 °C і GPU 35–95 °C.");
+                return;
+            }
+            boolean requested = enabled.isChecked();
+            saving[0] = true;
+            endpoint.updateNetwork(this);
+            network.execute(() -> {
+                try {
+                    JSONObject current = endpoint.saveKeyboard(requested, thresholds);
+                    handler.post(() -> {
+                        saving[0] = false;
+                        applied[0] = current.optJSONObject("settings");
+                        showKeyboardState(current, note);
+                    });
+                } catch (Exception error) {
+                    handler.post(() -> {
+                        saving[0] = false;
+                        note.setText("ПК не підтвердив збереження порогів.");
+                    });
+                }
+            });
+        });
+        add(form, save, 10);
+        enabled.setEnabled(false);
+        save.setEnabled(false);
+        for (EditText field : input) {
+            field.setEnabled(false);
+        }
+        refreshKeyboard = new Runnable() {
+            @Override public void run() {
+                if (!resumed || refreshKeyboard != this || !form.isAttachedToWindow()) {
+                    return;
+                }
+                endpoint.updateNetwork(MainActivity.this);
+                network.execute(() -> {
+                    try {
+                        JSONObject status = endpoint.keyboardStatus();
+                        handler.post(() -> {
+                            if (saving[0]) {
+                                return;
+                            }
+                            JSONObject current = status.optJSONObject("settings");
+                            boolean supported = status.optBoolean("supported");
+                            enabled.setEnabled(supported);
+                            save.setEnabled(supported);
+                            boolean clean = applied[0] == null || enabled.isChecked() == applied[0].optBoolean("enabled");
+                            for (int i = 0; i < input.length; i++) {
+                                input[i].setEnabled(supported);
+                                clean &= applied[0] == null || input[i].getText().toString().equals(applied[0].optString(keys[i]));
+                            }
+                            if (clean && current != null) {
+                                enabled.setChecked(current.optBoolean("enabled"));
+                                for (int i = 0; i < input.length; i++) {
+                                    String value = current.optString(keys[i]);
+                                    if (!value.contentEquals(input[i].getText())) {
+                                        input[i].setText(value);
+                                    }
+                                }
+                                applied[0] = current;
+                            }
+                            showKeyboardState(status, note);
+                        });
+                    } catch (Exception error) {
+                        handler.post(() -> note.setText(protectionError(error)));
+                    } finally {
+                        handler.post(() -> {
+                            if (resumed && refreshKeyboard == this && form.isAttachedToWindow()) {
+                                handler.removeCallbacks(this);
+                                handler.postDelayed(this, 5000);
+                            }
+                        });
+                    }
+                });
+            }
+        };
+        if (resumed) {
+            handler.post(refreshKeyboard);
+        }
+    }
+
+    private void showKeyboardState(JSONObject status, TextView note) {
+        String message;
+        switch (status.optString("state")) {
+            case "green": message = "Зелений · нижче жовтих порогів"; break;
+            case "yellow": message = "Жовтий · підвищена температура"; break;
+            case "red": message = "Червоний · досягнуто червоного порога"; break;
+            case "unsupported": message = "На цьому ПК керування підсвіткою недоступне."; break;
+            case "off": message = "Вимкнено. Клавіатура використовує збережений колір."; break;
+            case "unavailable": message = "Драйвер поки не підтвердив зміну кольору."; break;
+            default: message = "Очікування температури…";
+        }
+        setText(note, message);
+    }
+
     private EditText addProtectionThreshold(LinearLayout thresholds, String caption) {
         LinearLayout column = column();
         add(column, label(caption, 12, palette.muted, true), 0);
@@ -618,6 +879,9 @@ public final class MainActivity extends Activity {
 
     @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(code, permissions, results);
+        if (code == BLUETOOTH_PERMISSION && !setup) {
+            restartPolling();
+        }
         if (code == NOTIFICATION_PERMISSION) {
             applyAlertSetting(results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED);
             if (results.length == 0 || results[0] != PackageManager.PERMISSION_GRANTED) {
@@ -682,6 +946,10 @@ public final class MainActivity extends Activity {
         hostView.setMaxLines(2);
         hostView.setEllipsize(TextUtils.TruncateAt.END);
         add(summary, hostView, 0);
+        if (computers.list().size() > 1) {
+            hostView.setContentDescription("Перемкнути комп’ютер");
+            hostView.setOnClickListener(view -> chooseComputer());
+        }
         statusView = label("Підключення…", 14, palette.muted, false);
         statusView.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         LinearLayout connectionStatus = row();
@@ -769,7 +1037,10 @@ public final class MainActivity extends Activity {
     }
 
     private void updateOverview(JSONObject json) {
-        host = json.optString("host", pc.address());
+        String detected = json.optString("host", "");
+        computers.useDetectedName(detected);
+        String savedName = computers.selected().name;
+        host = savedName.isEmpty() ? pc.address() : savedName;
         hostView.setText(host);
         double cpuPercent = number(json, "cpuPercent");
         cpu.update(percent(cpuPercent), Double.isNaN(cpuPercent) ? "Очікування другого виміру" : "Завантаження CPU", cpuPercent);
@@ -988,6 +1259,7 @@ public final class MainActivity extends Activity {
         content.addView(list, listParams);
         processAdapter = new ProcessAdapter();
         list.setAdapter(processAdapter);
+        list.setOnItemClickListener((parent, view, position, id) -> confirmProcessTermination(processAdapter.getItem(position)));
         allProcesses = Collections.emptyList();
         filter.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
@@ -998,6 +1270,41 @@ public final class MainActivity extends Activity {
             }
             @Override public void afterTextChanged(Editable s) {}
         });
+    }
+
+    private void confirmProcessTermination(ProcessInfo process) {
+        PcConnection endpoint = pc;
+        if (endpoint == null || process.started == 0) {
+            return;
+        }
+        new android.app.AlertDialog.Builder(this).setTitle("Завершити процес?")
+                .setMessage(process.name + " (PID " + process.pid + "). Незбережені дані можуть бути втрачені.")
+                .setNegativeButton("Скасувати", null)
+                .setPositiveButton("Завершити", (dialog, ignored) -> {
+                    endpoint.updateNetwork(this);
+                    network.execute(() -> {
+                        String result;
+                        try {
+                            result = endpoint.terminateProcess(process.pid, process.started).optString("result");
+                        } catch (Exception error) {
+                            result = "unavailable";
+                        }
+                        final String outcome = result;
+                        handler.post(() -> {
+                            if (pc != endpoint || !resumed) {
+                                return;
+                            }
+                            String message;
+                            switch (outcome) {
+                                case "ended": message = "Процес завершено."; restartPolling(); break;
+                                case "changed": message = "Процес змінився. Виберіть рядок знову."; break;
+                                case "protected": message = "Цей процес захищено."; break;
+                                default: message = "Windows не підтвердила завершення процесу.";
+                            }
+                            android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show();
+                        });
+                    });
+                }).show();
     }
 
     private void showSortButtons(LinearLayout sort) {
@@ -1088,7 +1395,8 @@ public final class MainActivity extends Activity {
                     } else {
                         updateOverview(json);
                     }
-                    String route = "Cloudflare".equals(endpoint.address()) ? " · Cloudflare" : "";
+                    String channel = endpoint.address();
+                    String route = "Cloudflare".equals(channel) || "Bluetooth".equals(channel) ? " · " + channel : "";
                     setStatus("Оновлено о " + updatedAt + route, palette.accent);
                     handler.postDelayed(poll, processTab ? 5_000 : 2_000);
                 });
@@ -1121,7 +1429,7 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < items.length(); i++) {
             JSONObject item = items.getJSONObject(i);
             result.add(new ProcessInfo(item.getInt("pid"), item.getString("name"),
-                    item.getLong("workingSetBytes"), number(item, "cpuPercent")));
+                    item.getLong("workingSetBytes"), number(item, "cpuPercent"), item.optLong("started")));
         }
         return result;
     }
@@ -1302,7 +1610,8 @@ public final class MainActivity extends Activity {
         @Override public ProcessInfo getItem(int index) { return entries.get(index); }
         @Override public long getItemId(int index) { return getItem(index).pid; }
         @Override public boolean hasStableIds() { return true; }
-        @Override public boolean isEnabled(int index) { return false; }
+        @Override public boolean areAllItemsEnabled() { return false; }
+        @Override public boolean isEnabled(int index) { return getItem(index).started > 0; }
 
         @Override public View getView(int index, View recycled, ViewGroup parent) {
             LinearLayout wrapper = recycled == null ? column() : (LinearLayout) recycled;
@@ -1353,12 +1662,14 @@ public final class MainActivity extends Activity {
         final String name;
         final long bytes;
         final double cpu;
+        final long started;
 
-        ProcessInfo(int pid, String name, long bytes, double cpu) {
+        ProcessInfo(int pid, String name, long bytes, double cpu, long started) {
             this.pid = pid;
             this.name = name;
             this.bytes = bytes;
             this.cpu = cpu;
+            this.started = started;
         }
     }
 

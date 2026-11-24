@@ -5,7 +5,7 @@
     Background="{DynamicResource Back}" Foreground="{DynamicResource Ink}"
     FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="14"
     WindowStartupLocation="CenterScreen"
-    Closing="OnClosing" StateChanged="OnStateChanged" IsVisibleChanged="OnVisibilityChanged">
+    StateChanged="OnStateChanged" IsVisibleChanged="OnVisibilityChanged">
     <Window.Resources>
         <Style TargetType="TextBlock">
             <Setter Property="Foreground" Value="{DynamicResource Ink}" />
@@ -70,6 +70,7 @@
             <StackPanel>
                 <TextBlock Text="PC Pulse" FontSize="27" FontWeight="SemiBold" />
                 <TextBlock x:Name="ServerStatus" Style="{StaticResource Muted}" Text="Запуск агента…" />
+                <TextBlock x:Name="PhoneStatus" Style="{StaticResource Muted}" Text="Телефон від’єднано" />
             </StackPanel>
         </DockPanel>
         <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,13">
@@ -147,13 +148,15 @@
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                     <Button x:Name="SortCpu" Content="За CPU" Click="SortCpuClicked" Margin="8,0" />
                     <Button x:Name="SortRam" Content="За пам’яттю" Click="SortRamClicked" />
+                    <Button x:Name="TerminateProcessButton" Content="Завершити" Margin="8,0,0,0"
+                        IsEnabled="False" Click="TerminateProcessClicked" />
                 </StackPanel>
                 <TextBox x:Name="Search" TextChanged="SearchChanged" Padding="10,6" VerticalContentAlignment="Center"
                     Background="{DynamicResource Field}" Foreground="{DynamicResource Ink}" BorderBrush="{DynamicResource Line}"
                     AutomationProperties.Name="Пошук за назвою або PID" />
             </DockPanel>
             <TextBlock Grid.Row="1" x:Name="ProcessSummary" Text="Очікування виміру CPU…" Style="{StaticResource Muted}" Margin="0,11,0,9" />
-            <ListBox Grid.Row="2" x:Name="ProcessList" Background="{DynamicResource Panel}"
+            <ListBox Grid.Row="2" x:Name="ProcessList" Background="{DynamicResource Panel}" SelectionChanged="ProcessSelectionChanged"
                 Foreground="{DynamicResource Ink}" BorderBrush="{DynamicResource Line}"
                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.VirtualizationMode="Recycling">
                 <ListBox.ItemContainerStyle>
@@ -175,8 +178,16 @@
                 </ListBox.ItemTemplate>
             </ListBox>
         </Grid>
-        <ScrollViewer x:Name="SettingsPanel" Grid.Row="2" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
-            <StackPanel Margin="0,0,9,0">
+        <Grid x:Name="SettingsPanel" Grid.Row="2" Visibility="Collapsed">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="164" /><ColumnDefinition /></Grid.ColumnDefinitions>
+            <StackPanel Margin="0,0,16,0">
+                <Button x:Name="ConnectionCategory" Content="Підключення" Tag="0" Click="SettingsCategoryClicked" Margin="0,0,0,8" />
+                <Button x:Name="HardwareCategory" Content="Обладнання" Tag="1" Click="SettingsCategoryClicked" Margin="0,0,0,8" />
+                <Button x:Name="AppearanceCategory" Content="Вигляд і запуск" Tag="2" Click="SettingsCategoryClicked" />
+            </StackPanel>
+            <ScrollViewer x:Name="SettingsScroll" Grid.Column="1" VerticalScrollBarVisibility="Auto">
+              <StackPanel Margin="0,0,9,0">
+               <StackPanel x:Name="ConnectionSettings">
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <TextBlock Text="Підключення телефона" FontSize="19" FontWeight="SemiBold" />
@@ -218,6 +229,19 @@
                 </Border>
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
+                        <TextBlock Text="Bluetooth" FontSize="19" FontWeight="SemiBold" />
+                        <CheckBox x:Name="BluetoothEnabled" Content="Дозволити пряме підключення"
+                            Foreground="{DynamicResource Ink}" Margin="0,10,0,6" Click="BluetoothClicked" IsEnabled="False" />
+                        <TextBlock x:Name="BluetoothState" Style="{StaticResource Muted}" Margin="0,0,0,9" />
+                        <Button x:Name="CopyBluetoothCodeButton" Content="Копіювати код Bluetooth"
+                            HorizontalAlignment="Left" IsEnabled="False" Click="CopyBluetoothCodeClicked" />
+                        <TextBlock x:Name="CopyBluetoothFeedback" Style="{StaticResource Muted}" Margin="0,6,0,0" />
+                    </StackPanel>
+                </Border>
+               </StackPanel>
+               <StackPanel x:Name="AppearanceSettings" Visibility="Collapsed">
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
                         <TextBlock Text="Поведінка й оформлення" FontSize="19" FontWeight="SemiBold" />
                         <CheckBox x:Name="AutoStart" Content="Запускати після входу в Windows" Margin="0,14,0,14"
                             Foreground="{DynamicResource Ink}" Click="AutoStartClicked" />
@@ -230,6 +254,8 @@
                         <TextBlock x:Name="SettingsFeedback" Style="{StaticResource Muted}" Margin="0,11,0,0" />
                     </StackPanel>
                 </Border>
+               </StackPanel>
+               <StackPanel x:Name="HardwareSettings" Visibility="Collapsed">
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <TextBlock Text="Термозахист" FontSize="19" FontWeight="SemiBold" />
@@ -252,7 +278,46 @@
                         <TextBlock x:Name="ProtectionFeedback" Style="{StaticResource Muted}" Margin="0,3,0,0" />
                     </StackPanel>
                 </Border>
-            </StackPanel>
-        </ScrollViewer>
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="Температура кольором клавіатури" FontSize="19" FontWeight="SemiBold" />
+                        <CheckBox x:Name="KeyboardEnabled" Content="Показувати нагрів підсвіткою"
+                            Margin="0,12,0,10" Foreground="{DynamicResource Ink}" />
+                        <UniformGrid Columns="2" Margin="0,1,0,8">
+                            <StackPanel Margin="0,0,10,8">
+                                <TextBlock Text="CPU · жовтий, °C" Style="{StaticResource Muted}" />
+                                <TextBox x:Name="CpuWarm" MaxLength="3" Padding="6,4" Margin="0,4,0,0"
+                                    AutomationProperties.Name="Жовтий поріг CPU" Background="{DynamicResource Field}"
+                                    Foreground="{DynamicResource Ink}" BorderBrush="{DynamicResource Line}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,0,8">
+                                <TextBlock Text="CPU · червоний, °C" Style="{StaticResource Muted}" />
+                                <TextBox x:Name="CpuHot" MaxLength="3" Padding="6,4" Margin="0,4,0,0"
+                                    AutomationProperties.Name="Червоний поріг CPU" Background="{DynamicResource Field}"
+                                    Foreground="{DynamicResource Ink}" BorderBrush="{DynamicResource Line}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,10,8">
+                                <TextBlock Text="GPU · жовтий, °C" Style="{StaticResource Muted}" />
+                                <TextBox x:Name="GpuWarm" MaxLength="3" Padding="6,4" Margin="0,4,0,0"
+                                    AutomationProperties.Name="Жовтий поріг GPU" Background="{DynamicResource Field}"
+                                    Foreground="{DynamicResource Ink}" BorderBrush="{DynamicResource Line}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,0,8">
+                                <TextBlock Text="GPU · червоний, °C" Style="{StaticResource Muted}" />
+                                <TextBox x:Name="GpuHot" MaxLength="3" Padding="6,4" Margin="0,4,0,0"
+                                    AutomationProperties.Name="Червоний поріг GPU" Background="{DynamicResource Field}"
+                                    Foreground="{DynamicResource Ink}" BorderBrush="{DynamicResource Line}" />
+                            </StackPanel>
+                        </UniformGrid>
+                        <TextBlock x:Name="KeyboardState" Style="{StaticResource Muted}" Margin="0,0,0,8" />
+                        <Button x:Name="SaveKeyboard" Content="Зберегти пороги кольорів" HorizontalAlignment="Left"
+                            Click="SaveKeyboardClicked" IsEnabled="False" />
+                        <TextBlock x:Name="KeyboardFeedback" Style="{StaticResource Muted}" Margin="0,6,0,0" />
+                    </StackPanel>
+                </Border>
+               </StackPanel>
+              </StackPanel>
+            </ScrollViewer>
+        </Grid>
     </Grid>
 </Window>

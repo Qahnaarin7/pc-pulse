@@ -9,7 +9,7 @@ static class MonitorServer
 {
     public static async Task<WebApplication> StartAsync(IPAddress address, int port,
         PairingIdentity identity, MetricsSampler sampler, ThermalProtection protection,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, PhonePresence? phones = null)
     {
         var expected = Encoding.ASCII.GetBytes("Bearer " + PairingIdentity.Encode(identity.Token));
         var builder = WebApplication.CreateSlimBuilder();
@@ -46,9 +46,25 @@ static class MonitorServer
                 return;
             }
             await next(context);
+            if (phones is not null && context.Response.StatusCode == StatusCodes.Status200OK &&
+                context.Request.Headers.TryGetValue("X-PC-Pulse-Phone", out var mobile))
+            {
+                var loopback = context.Connection.RemoteIpAddress is { } source && IPAddress.IsLoopback(source);
+                var route = mobile.ToString() switch
+                {
+                    "cloudflare" when loopback => "Cloudflare",
+                    "bluetooth" when loopback => "Bluetooth",
+                    "lan" => "Wi-Fi / VPN",
+                    _ => null
+                };
+                if (route is not null)
+                    phones.Seen(route);
+            }
         });
         app.MapGet("/v1/overview", (bool? sensors) => sampler.ReadOverview(sensors ?? true));
         app.MapGet("/v1/processes", (CancellationToken token) => sampler.ReadProcessesAsync(token));
+        app.MapPost("/v1/processes/{pid:int}/terminate", (int pid, ulong started, CancellationToken token) =>
+            sampler.TerminateProcessAsync(pid, started, token));
         app.MapGet("/v1/temperatures", () => sampler.ReadTemperatures());
         app.MapPost("/v1/cooling/{mode}", (string mode) =>
         {
@@ -58,6 +74,15 @@ static class MonitorServer
             return cooling is null ? Results.Conflict() : Results.Ok(cooling);
         });
         app.MapGet("/v1/thermal-protection", () => protection.GetStatus());
+        app.MapGet("/v1/keyboard-temperature", () => protection.GetKeyboardStatus());
+        app.MapPost("/v1/keyboard-temperature", (bool enabled, int cpuWarm, int cpuHot, int gpuWarm, int gpuHot) =>
+        {
+            var requested = new KeyboardThresholds(enabled, cpuWarm, cpuHot, gpuWarm, gpuHot);
+            if (!requested.IsValid)
+                return Results.BadRequest();
+            var changed = protection.ConfigureKeyboard(requested);
+            return changed is null ? Results.Conflict() : Results.Ok(changed);
+        });
         app.MapPost("/v1/thermal-protection", (bool enabled, int cpuCritical, int gpuCritical) =>
         {
             var requested = new ProtectionSettings(enabled, cpuCritical, gpuCritical);
