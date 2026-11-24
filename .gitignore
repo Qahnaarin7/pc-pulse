@@ -1,0 +1,7 @@
+agent/bin/
+agent/obj/
+desktop/bin/
+desktop/obj/
+android/build/
+installer/build/
+dist/

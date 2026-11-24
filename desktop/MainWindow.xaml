@@ -1,0 +1,209 @@
+<Window x:Class="PcPulse.Desktop.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="PC Pulse" Width="920" Height="730" MinWidth="670" MinHeight="530"
+    Background="{DynamicResource Back}" Foreground="{DynamicResource Ink}"
+    FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="14"
+    WindowStartupLocation="CenterScreen"
+    Closing="OnClosing" StateChanged="OnStateChanged" IsVisibleChanged="OnVisibilityChanged">
+    <Window.Resources>
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+        </Style>
+        <Style x:Key="Muted" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="Foreground" Value="{DynamicResource Muted}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource Panel}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Line}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="13" />
+            <Setter Property="Padding" Value="17" />
+            <Setter Property="Margin" Value="0,0,0,12" />
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+            <Setter Property="Background" Value="{DynamicResource Field}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Line}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="14,8" />
+            <Setter Property="MinHeight" Value="38" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonFace" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="7" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonFace" Property="Opacity" Value="0.82" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ButtonFace" Property="Opacity" Value="0.52" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="ButtonFace" Property="BorderBrush" Value="{DynamicResource Accent}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="StrongButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{DynamicResource Primary}" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Primary}" />
+        </Style>
+    </Window.Resources>
+    <Grid Margin="26,23,26,19">
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition /></Grid.RowDefinitions>
+        <DockPanel Margin="0,0,0,18">
+            <Border Width="45" Height="45" CornerRadius="10" Background="{DynamicResource Field}" Margin="0,0,13,0">
+                <Path Stroke="{DynamicResource Accent}" StrokeThickness="2.5" StrokeStartLineCap="Round"
+                    StrokeEndLineCap="Round" StrokeLineJoin="Round" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Data="M 0,12 L 7,12 11,4 17,20 22,12 29,12" />
+            </Border>
+            <StackPanel>
+                <TextBlock Text="PC Pulse" FontSize="27" FontWeight="SemiBold" />
+                <TextBlock x:Name="ServerStatus" Style="{StaticResource Muted}" Text="Запуск агента…" />
+            </StackPanel>
+        </DockPanel>
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,13">
+            <Button x:Name="OverviewTab" Content="Огляд" Click="OverviewClicked" MinWidth="112" />
+            <Button x:Name="ProcessTab" Content="Процеси" Click="ProcessesClicked" MinWidth="112" Margin="8,0,0,0" />
+            <Button x:Name="SettingsTab" Content="Налаштування" Click="SettingsClicked" MinWidth="130" Margin="8,0,0,0" />
+        </StackPanel>
+        <ScrollViewer x:Name="OverviewPanel" Grid.Row="2" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="0,0,9,0">
+                <TextBlock x:Name="ComputerTitle" FontSize="25" FontWeight="SemiBold" Margin="0,3,0,4" />
+                <TextBlock x:Name="UpdatedAt" Text="Очікування показників" Style="{StaticResource Muted}" Margin="0,0,0,15" />
+                <UniformGrid Columns="2" Margin="0,0,-10,0">
+                    <Border Style="{StaticResource Card}" Margin="0,0,10,12">
+                        <StackPanel>
+                            <TextBlock Text="Завантаження CPU" Style="{StaticResource Muted}" />
+                            <TextBlock x:Name="CpuLoad" Text="—" FontSize="34" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
+                            <ProgressBar x:Name="CpuBar" Height="5" Foreground="{DynamicResource Accent}" Background="{DynamicResource Field}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Card}" Margin="0,0,10,12">
+                        <StackPanel>
+                            <TextBlock Text="Використання RAM" Style="{StaticResource Muted}" />
+                            <TextBlock x:Name="RamLoad" Text="—" FontSize="34" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
+                            <ProgressBar x:Name="RamBar" Height="5" Foreground="{DynamicResource Accent}" Background="{DynamicResource Field}" />
+                        </StackPanel>
+                    </Border>
+                </UniformGrid>
+                <UniformGrid Columns="2" Margin="0,0,-10,0">
+                    <Border Style="{StaticResource Card}" Margin="0,0,10,12">
+                        <StackPanel>
+                            <TextBlock Text="Температура CPU" Style="{StaticResource Muted}" />
+                            <TextBlock x:Name="CpuTemp" Text="—" FontSize="33" FontWeight="SemiBold" Foreground="{DynamicResource Thermal}" />
+                            <TextBlock x:Name="CpuSource" Style="{StaticResource Muted}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Card}" Margin="0,0,10,12">
+                        <StackPanel>
+                            <TextBlock Text="Температура GPU" Style="{StaticResource Muted}" />
+                            <TextBlock x:Name="GpuTemp" Text="—" FontSize="33" FontWeight="SemiBold" Foreground="{DynamicResource Thermal}" />
+                            <TextBlock x:Name="GpuDetail" Style="{StaticResource Muted}" />
+                        </StackPanel>
+                    </Border>
+                </UniformGrid>
+                <UniformGrid Columns="2" Margin="0,0,-10,0">
+                    <Border Style="{StaticResource Card}" Margin="0,0,10,12">
+                        <StackPanel>
+                            <TextBlock Text="Накопичувачі" FontWeight="SemiBold" Margin="0,0,0,6" />
+                            <TextBlock x:Name="DiskSensors" Text="Зчитування датчиків…" Style="{StaticResource Muted}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Card}" Margin="0,0,10,12">
+                        <StackPanel>
+                            <TextBlock Text="Модулі RAM" FontWeight="SemiBold" Margin="0,0,0,6" />
+                            <TextBlock x:Name="MemorySensors" Text="Зчитування датчиків…" Style="{StaticResource Muted}" />
+                        </StackPanel>
+                    </Border>
+                </UniformGrid>
+                <Border x:Name="CoolingCard" Style="{StaticResource Card}" Visibility="Collapsed">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="AutoFans" Content="Авто" Click="AutoFansClicked" Margin="8,0" />
+                            <Button x:Name="MaxFans" Content="Максимум" Click="MaxFansClicked" />
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Text="Охолодження" FontWeight="SemiBold" />
+                            <TextBlock x:Name="CoolingText" Style="{StaticResource Muted}" />
+                        </StackPanel>
+                    </DockPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+        <Grid x:Name="ProcessPanel" Grid.Row="2" Visibility="Collapsed">
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition /></Grid.RowDefinitions>
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="SortCpu" Content="За CPU" Click="SortCpuClicked" Margin="8,0" />
+                    <Button x:Name="SortRam" Content="За пам’яттю" Click="SortRamClicked" />
+                </StackPanel>
+                <TextBox x:Name="Search" TextChanged="SearchChanged" Padding="10,6" VerticalContentAlignment="Center"
+                    Background="{DynamicResource Field}" Foreground="{DynamicResource Ink}" BorderBrush="{DynamicResource Line}"
+                    AutomationProperties.Name="Пошук за назвою або PID" />
+            </DockPanel>
+            <TextBlock Grid.Row="1" x:Name="ProcessSummary" Text="Очікування виміру CPU…" Style="{StaticResource Muted}" Margin="0,11,0,9" />
+            <ListBox Grid.Row="2" x:Name="ProcessList" Background="{DynamicResource Panel}"
+                Foreground="{DynamicResource Ink}" BorderBrush="{DynamicResource Line}"
+                ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.VirtualizationMode="Recycling">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Padding" Value="10,5" />
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="73" /><ColumnDefinition Width="100" /><ColumnDefinition Width="115" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Grid.Column="1" Text="{Binding Pid}" Foreground="{DynamicResource Muted}" />
+                            <TextBlock Grid.Column="2" Text="{Binding Cpu}" Foreground="{DynamicResource Accent}" />
+                            <TextBlock Grid.Column="3" Text="{Binding Memory}" />
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Grid>
+        <ScrollViewer x:Name="SettingsPanel" Grid.Row="2" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="0,0,9,0">
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="Підключення телефона" FontSize="19" FontWeight="SemiBold" />
+                        <TextBlock x:Name="AddressList" Style="{StaticResource Muted}" Margin="0,7,0,10" />
+                        <DockPanel>
+                            <Button x:Name="CopyCodeButton" DockPanel.Dock="Left" Style="{StaticResource StrongButton}"
+                                Content="Копіювати код" IsEnabled="False" Click="CopyCodeClicked" />
+                            <TextBlock x:Name="CopyFeedback" Style="{StaticResource Muted}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                        </DockPanel>
+                        <TextBlock Text="Код дозволяє підключитися в локальній мережі й через приватну VPN, якщо її адаптер активний на ПК."
+                            Style="{StaticResource Muted}" Margin="0,12,0,0" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="Поведінка й оформлення" FontSize="19" FontWeight="SemiBold" />
+                        <CheckBox x:Name="AutoStart" Content="Запускати після входу в Windows" Margin="0,14,0,14"
+                            Foreground="{DynamicResource Ink}" Click="AutoStartClicked" />
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Тема" VerticalAlignment="Center" Margin="0,0,12,0" />
+                            <Button x:Name="DayTheme" Content="День" Click="DayClicked" MinWidth="85" />
+                            <Button x:Name="NightTheme" Content="Ніч" Click="NightClicked" MinWidth="85" Margin="8,0,0,0" />
+                        </StackPanel>
+                        <TextBlock x:Name="SettingsFeedback" Style="{StaticResource Muted}" Margin="0,11,0,0" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Window>

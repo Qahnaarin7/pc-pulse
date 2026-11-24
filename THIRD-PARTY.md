@@ -1,0 +1,11 @@
+# Third-party software
+
+The Windows agent uses the following unmodified libraries.
+
+- LibreHardwareMonitorLib 0.9.6 · Mozilla Public License 2.0. [Corresponding source](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/tree/v0.9.6)
+- BlackSharp.Core 1.0.7 · Mozilla Public License 2.0. [Corresponding source](https://github.com/Blacktempel/BlackSharp/tree/c70b735c6cec123ee8a046ac4a0bc6c606f52cf0)
+- DiskInfoToolkit 1.1.2 · Mozilla Public License 2.0. [Corresponding source](https://github.com/Blacktempel/DiskInfoToolkit/tree/25319eae5781e75bcf141e844ceab2afe94d40ea)
+- HidSharp 2.6.4 · Apache License 2.0. [NuGet package](https://www.nuget.org/packages/HidSharp/2.6.4)
+- Microsoft .NET and ASP.NET Core 10 · MIT License. [Runtime source](https://github.com/dotnet/runtime) and [ASP.NET Core source](https://github.com/dotnet/aspnetcore).
+
+The Windows binary archive includes the license texts and notices. The Android app uses Android platform APIs.
