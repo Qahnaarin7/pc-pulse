@@ -8,11 +8,12 @@ sealed class PairingIdentity(X509Certificate2 certificate, byte[] token) : IDisp
 {
     public X509Certificate2 Certificate { get; } = certificate;
     public byte[] Token { get; } = token;
+    public static string StateDirectory => Environment.GetEnvironmentVariable("PC_PULSE_STATE_DIR") ??
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PcPulse");
 
     public static PairingIdentity Load()
     {
-        var directory = Environment.GetEnvironmentVariable("PC_PULSE_STATE_DIR") ??
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PcPulse");
+        var directory = StateDirectory;
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, "identity.json");
         if (!File.Exists(path))

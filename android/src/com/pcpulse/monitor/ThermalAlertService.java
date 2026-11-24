@@ -35,7 +35,7 @@ public final class ThermalAlertService extends Service {
     private static final int MONITOR_ID = 7100;
     private static final int CPU_ID = 7101;
     private static final int FIRST_GPU_ID = 7200;
-    private static final long INTERVAL_SECONDS = 15;
+    private static final long INTERVAL_SECONDS = 5;
     private static final double HYSTERESIS = 3;
     private final Map<Integer, Integer> levels = new HashMap<>();
     private final ScheduledExecutorService network = Executors.newSingleThreadScheduledExecutor();
@@ -136,11 +136,11 @@ public final class ThermalAlertService extends Service {
                     }
                 }
             }
-            updateStatus(hasTemperature ? "Перевірка датчиків кожні 15 с" : "Температурні датчики недоступні");
+            updateStatus(hasTemperature ? "Перевірка датчиків кожні 5 с" : "Температурні датчики недоступні");
         } catch (Exception error) {
             if (!network.isShutdown()) {
                 failures = Math.min(failures + 1, 3);
-                nextAttempt = SystemClock.elapsedRealtime() + failures * 15_000L;
+                nextAttempt = SystemClock.elapsedRealtime() + (5_000L << (failures - 1));
                 updateStatus("ПК недоступний · очікуємо з’єднання");
             }
         }

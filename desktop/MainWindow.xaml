@@ -197,10 +197,33 @@
                             Foreground="{DynamicResource Ink}" Click="AutoStartClicked" />
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="Тема" VerticalAlignment="Center" Margin="0,0,12,0" />
-                            <Button x:Name="DayTheme" Content="День" Click="DayClicked" MinWidth="85" />
+                            <Button x:Name="SystemTheme" Content="За системою" Click="SystemClicked" MinWidth="110" />
+                            <Button x:Name="DayTheme" Content="День" Click="DayClicked" MinWidth="85" Margin="8,0,0,0" />
                             <Button x:Name="NightTheme" Content="Ніч" Click="NightClicked" MinWidth="85" Margin="8,0,0,0" />
                         </StackPanel>
                         <TextBlock x:Name="SettingsFeedback" Style="{StaticResource Muted}" Margin="0,11,0,0" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="Термозахист" FontSize="19" FontWeight="SemiBold" />
+                        <TextBlock Text="PC Pulse вмикає максимальні оберти на ПК, коли CPU або GPU досягає порога. Працює і в треї."
+                            Style="{StaticResource Muted}" Margin="0,7,0,0" />
+                        <CheckBox x:Name="ProtectEnabled" Content="Максимум на критичній температурі" Margin="0,12,0,10"
+                            Foreground="{DynamicResource Ink}" />
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="CPU, °C" VerticalAlignment="Center" Margin="0,0,8,0" />
+                            <TextBox x:Name="ProtectCpu" Width="55" MaxLength="3" VerticalContentAlignment="Center"
+                                AutomationProperties.Name="Критична температура CPU"
+                                Background="{DynamicResource Field}" Foreground="{DynamicResource Ink}" BorderBrush="{DynamicResource Line}" />
+                            <TextBlock Text="GPU, °C" VerticalAlignment="Center" Margin="16,0,8,0" />
+                            <TextBox x:Name="ProtectGpu" Width="55" MaxLength="3" VerticalContentAlignment="Center"
+                                AutomationProperties.Name="Критична температура GPU"
+                                Background="{DynamicResource Field}" Foreground="{DynamicResource Ink}" BorderBrush="{DynamicResource Line}" />
+                            <Button x:Name="SaveProtection" Content="Зберегти" Click="ProtectionClicked" Margin="15,0,0,0" />
+                        </StackPanel>
+                        <TextBlock x:Name="ProtectionState" Style="{StaticResource Muted}" Margin="0,9,0,0" />
+                        <TextBlock x:Name="ProtectionFeedback" Style="{StaticResource Muted}" Margin="0,3,0,0" />
                     </StackPanel>
                 </Border>
             </StackPanel>

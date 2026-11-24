@@ -2,6 +2,8 @@ agent/bin/
 agent/obj/
 desktop/bin/
 desktop/obj/
+tests/bin/
+tests/obj/
 android/build/
 installer/build/
 dist/

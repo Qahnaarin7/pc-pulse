@@ -16,7 +16,8 @@ try
     var settings = ReadSettings(args);
     using var identity = PairingIdentity.Load();
     using var sampler = new MetricsSampler(settings.Sensors);
-    await using var app = await MonitorServer.StartAsync(settings.Address, settings.Port, identity, sampler);
+    await using var protection = new ThermalProtection(sampler);
+    await using var app = await MonitorServer.StartAsync(settings.Address, settings.Port, identity, sampler, protection);
     Console.WriteLine($"PC Pulse · {Environment.MachineName}");
     Console.WriteLine($"Адреса ПК: {settings.Address}:{settings.Port}");
     Console.WriteLine("Вставте весь наступний рядок у PC Pulse на Android:");

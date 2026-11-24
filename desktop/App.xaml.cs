@@ -21,6 +21,7 @@ public partial class App : Application
     private Icon? icon;
     private MainWindow? window;
     private MetricsSampler? sampler;
+    private ThermalProtection? protection;
     private PairingIdentity? identity;
     private WebApplication? server;
     private Task<WebApplication>? pendingServer;
@@ -48,7 +49,8 @@ public partial class App : Application
             port = requested;
 
         sampler = new MetricsSampler(true);
-        window = new MainWindow(sampler, port);
+        protection = new ThermalProtection(sampler);
+        window = new MainWindow(sampler, protection, port);
         MainWindow = window;
         showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, InstanceEvent);
         showWait = ThreadPool.RegisterWaitForSingleObject(showEvent, (_, _) =>
@@ -68,7 +70,7 @@ public partial class App : Application
         try
         {
             identity = PairingIdentity.Load();
-            pendingServer = MonitorServer.StartAsync(IPAddress.Any, port, identity, sampler, startup.Token);
+            pendingServer = MonitorServer.StartAsync(IPAddress.Any, port, identity, sampler, protection, startup.Token);
             server = await pendingServer;
             if (exiting)
                 return;
@@ -114,6 +116,8 @@ public partial class App : Application
             catch (OperationCanceledException) { }
             await server.DisposeAsync();
         }
+        if (protection is not null)
+            await protection.DisposeAsync();
         if (sampler is not null)
             await Task.Run(sampler.Dispose);
         identity?.Dispose();
@@ -122,6 +126,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs args)
     {
+        window?.StopWatchingTheme();
         tray?.Dispose();
         trayMenu?.Dispose();
         icon?.Dispose();

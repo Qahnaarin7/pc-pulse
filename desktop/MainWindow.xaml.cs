@@ -19,6 +19,7 @@ public partial class MainWindow : Window
     private const string SettingsKey = @"Software\PcPulse";
     private const string AppName = "PC Pulse";
     private readonly MetricsSampler sampler;
+    private readonly ThermalProtection protection;
     private readonly int port;
     private readonly DispatcherTimer refresh;
     private CancellationTokenSource? request;
@@ -26,13 +27,16 @@ public partial class MainWindow : Window
     private ProcessSnapshot? processes;
     private bool ramSort;
     private bool day;
+    private string themeMode;
+    private ProtectionSettings? lastProtection;
     private int tab;
 
-    internal MainWindow(MetricsSampler sampler, int port)
+    internal MainWindow(MetricsSampler sampler, ThermalProtection protection, int port)
     {
         this.sampler = sampler;
+        this.protection = protection;
         this.port = port;
-        refresh = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        refresh = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         refresh.Tick += (_, _) => Refresh();
         InitializeComponent();
         SourceInitialized += (_, _) => ApplyTitleBar();
@@ -40,8 +44,12 @@ public partial class MainWindow : Window
         using var run = Registry.CurrentUser.OpenSubKey(RunKey);
         AutoStart.IsChecked = run?.GetValue(AppName) is string;
         using var settings = Registry.CurrentUser.OpenSubKey(SettingsKey);
-        day = string.Equals(settings?.GetValue("Theme") as string, "day", StringComparison.Ordinal);
+        var stored = settings?.GetValue("Theme") as string;
+        themeMode = stored is "day" or "night" ? stored : "system";
+        day = IsDayTheme();
         ApplyTheme();
+        SystemEvents.UserPreferenceChanged += OnSystemPreference;
+        Activated += (_, _) => UpdateSystemTheme();
     }
 
     internal void SetServer(PairingIdentity? currentIdentity, string message)
@@ -84,6 +92,7 @@ public partial class MainWindow : Window
     private void SelectTab(int index)
     {
         tab = index;
+        refresh.Interval = TimeSpan.FromSeconds(index == 0 ? 2 : 5);
         OverviewPanel.Visibility = index == 0 ? Visibility.Visible : Visibility.Collapsed;
         ProcessPanel.Visibility = index == 1 ? Visibility.Visible : Visibility.Collapsed;
         SettingsPanel.Visibility = index == 2 ? Visibility.Visible : Visibility.Collapsed;
@@ -99,6 +108,7 @@ public partial class MainWindow : Window
         if (tab == 2)
         {
             UpdateAddresses();
+            RenderProtection(protection.GetStatus());
             return;
         }
 
@@ -179,7 +189,8 @@ public partial class MainWindow : Window
             _ => "Режим недоступний"
         };
         CoolingText.Text = $"{mode} · CPU {cooling.CpuFanRpm?.ToString() ?? "—"} · GPU {cooling.GpuFanRpm?.ToString() ?? "—"} об/хв";
-        AutoFans.IsEnabled = cooling.CanControl && cooling.Mode != "automatic";
+        var protectedMode = protection.GetStatus().State is "maximum" or "critical" or "recovering";
+        AutoFans.IsEnabled = cooling.CanControl && cooling.Mode != "automatic" && !protectedMode;
         MaxFans.IsEnabled = cooling.CanControl && cooling.Mode != "maximum";
     }
 
@@ -191,8 +202,8 @@ public partial class MainWindow : Window
         AutoFans.IsEnabled = MaxFans.IsEnabled = false;
         try
         {
-            var cooling = await Task.Run(() => sampler.SetCoolingMode(maximum));
-            if (cooling is null) CoolingText.Text = "Control Center не підтвердив режим.";
+            var cooling = await Task.Run(() => protection.SetManualMode(maximum));
+            if (cooling is null) CoolingText.Text = "Термозахист або Control Center утримує поточний режим.";
             else RenderCooling(cooling);
         }
         catch (Exception)
@@ -273,16 +284,100 @@ public partial class MainWindow : Window
         }
     }
 
-    private void DayClicked(object sender, RoutedEventArgs args) => SetTheme(true);
-    private void NightClicked(object sender, RoutedEventArgs args) => SetTheme(false);
-
-    private void SetTheme(bool daylight)
+    private async void ProtectionClicked(object sender, RoutedEventArgs args)
     {
-        day = daylight;
+        if (!int.TryParse(ProtectCpu.Text, out var cpu) || !int.TryParse(ProtectGpu.Text, out var gpu) ||
+            !new ProtectionSettings(true, cpu, gpu).IsValid)
+        {
+            ProtectionFeedback.Text = "Допустимі пороги: CPU 70–100 °C, GPU 60–95 °C.";
+            return;
+        }
+        var requested = new ProtectionSettings(ProtectEnabled.IsChecked == true, cpu, gpu);
+        SaveProtection.IsEnabled = false;
+        try
+        {
+            var configured = await Task.Run(() => protection.Configure(requested));
+            if (configured is null)
+                ProtectionFeedback.Text = "ПК не підтвердив доступ до режиму максимальних обертів.";
+            else
+            {
+                lastProtection = null;
+                RenderProtection(configured);
+                ProtectionFeedback.Text = "Збережено.";
+            }
+        }
+        catch (Exception)
+        {
+            ProtectionFeedback.Text = "Не вдалося зберегти налаштування.";
+        }
+        finally
+        {
+            SaveProtection.IsEnabled = protection.GetStatus().Supported;
+        }
+    }
+
+    private void RenderProtection(ProtectionStatus status)
+    {
+        var current = new ProtectionSettings(status.Enabled, status.CpuCritical, status.GpuCritical);
+        if (lastProtection != current)
+        {
+            ProtectEnabled.IsChecked = current.Enabled;
+            ProtectCpu.Text = current.CpuCritical.ToString();
+            ProtectGpu.Text = current.GpuCritical.ToString();
+            lastProtection = current;
+        }
+        ProtectEnabled.IsEnabled = ProtectCpu.IsEnabled = ProtectGpu.IsEnabled = SaveProtection.IsEnabled = status.Supported;
+        ProtectionState.Text = status.State switch
+        {
+            "unsupported" => "Керування вентиляторами для цієї моделі недоступне.",
+            "off" => "Вимкнено.",
+            "watching" => "Перевіряє температури приблизно кожні 2 с.",
+            "maximum" => "Термозахист тримає максимальні оберти.",
+            "recovering" => "Чекає 30 с стабільного охолодження.",
+            "manualMaximum" => "Вентилятори вже в режимі «Максимум».",
+            "critical" or "restricted" => "Поточний профіль Control Center обмежує керування.",
+            "unconfirmed" => "Control Center ще не підтвердив зміну режиму.",
+            _ => "Очікування показників датчиків."
+        };
+    }
+
+    private void SystemClicked(object sender, RoutedEventArgs args) => SetTheme("system");
+    private void DayClicked(object sender, RoutedEventArgs args) => SetTheme("day");
+    private void NightClicked(object sender, RoutedEventArgs args) => SetTheme("night");
+
+    private void SetTheme(string mode)
+    {
+        themeMode = mode;
         using var settings = Registry.CurrentUser.CreateSubKey(SettingsKey);
-        settings.SetValue("Theme", day ? "day" : "night");
+        settings.SetValue("Theme", mode);
+        day = IsDayTheme();
         ApplyTheme();
     }
+
+    private bool IsDayTheme()
+    {
+        if (themeMode != "system")
+            return themeMode == "day";
+        using var personalize = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+        return personalize?.GetValue("AppsUseLightTheme") is not 0;
+    }
+
+    private void OnSystemPreference(object sender, UserPreferenceChangedEventArgs args)
+    {
+        if (!Dispatcher.HasShutdownStarted)
+            Dispatcher.BeginInvoke(UpdateSystemTheme);
+    }
+
+    private void UpdateSystemTheme()
+    {
+        var systemDay = IsDayTheme();
+        if (systemDay == day)
+            return;
+        day = systemDay;
+        ApplyTheme();
+    }
+
+    internal void StopWatchingTheme() => SystemEvents.UserPreferenceChanged -= OnSystemPreference;
 
     private void ApplyTheme()
     {
@@ -317,8 +412,9 @@ public partial class MainWindow : Window
         SelectStyle(OverviewTab, tab == 0);
         SelectStyle(ProcessTab, tab == 1);
         SelectStyle(SettingsTab, tab == 2);
-        SelectStyle(DayTheme, day);
-        SelectStyle(NightTheme, !day);
+        SelectStyle(SystemTheme, themeMode == "system");
+        SelectStyle(DayTheme, themeMode == "day");
+        SelectStyle(NightTheme, themeMode == "night");
         SelectStyle(SortCpu, !ramSort);
         SelectStyle(SortRam, ramSort);
     }

@@ -19,4 +19,5 @@
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
+    <style name="PulseThemeSystem" parent="@style/PulseThemeDay" />
 </resources>

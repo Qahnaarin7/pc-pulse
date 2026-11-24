@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
+import android.content.res.Configuration;
 import android.graphics.Insets;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -85,6 +86,7 @@ public final class MainActivity extends Activity {
     private SharedPreferences preferences;
     private PulsePalette palette;
     private boolean day;
+    private String themeMode;
     private PcConnection pc;
     private Future<?> request;
     private int generation;
@@ -124,7 +126,12 @@ public final class MainActivity extends Activity {
 
     @Override protected void onCreate(Bundle state) {
         preferences = getSharedPreferences("pc_pulse", MODE_PRIVATE);
-        day = preferences.getBoolean("day_theme", false);
+        String previousTheme = preferences.contains("day_theme")
+                ? (preferences.getBoolean("day_theme", false) ? "day" : "night") : "system";
+        themeMode = preferences.getString("theme_mode", previousTheme);
+        int nightMode = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+        day = "day".equals(themeMode) ||
+                (!"night".equals(themeMode) && nightMode != Configuration.UI_MODE_NIGHT_YES);
         palette = PulsePalette.forDay(day);
         setTheme(day ? R.style.PulseThemeDay : R.style.PulseTheme);
         super.onCreate(state);
@@ -263,10 +270,13 @@ public final class MainActivity extends Activity {
             LinearLayout appearance = card();
             add(appearance, label("Тема", 17, palette.text, true), 0);
             LinearLayout choices = row();
-            addTabs(choices, "День", day, () -> changeTheme(true), "Ніч", !day, () -> changeTheme(false));
+            choices.addView(button("За системою", "system".equals(themeMode), () -> changeTheme("system")), weighted());
+            addThemeChoice(choices, "День", "day");
+            addThemeChoice(choices, "Ніч", "night");
             add(appearance, choices, 9);
             add(content, appearance, 14);
             renderAlertSettings(content);
+            renderProtectionSettings(content);
         }
 
         LinearLayout form = card();
@@ -326,9 +336,15 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void changeTheme(boolean daylight) {
-        if (day != daylight) {
-            preferences.edit().putBoolean("day_theme", daylight).apply();
+    private void addThemeChoice(LinearLayout choices, String caption, String mode) {
+        LinearLayout.LayoutParams params = weighted();
+        params.leftMargin = dp(8);
+        choices.addView(button(caption, mode.equals(themeMode), () -> changeTheme(mode)), params);
+    }
+
+    private void changeTheme(String mode) {
+        if (!mode.equals(themeMode)) {
+            preferences.edit().putString("theme_mode", mode).apply();
             recreate();
         }
     }
@@ -344,7 +360,7 @@ public final class MainActivity extends Activity {
         alertSwitch.setChecked(preferences.getBoolean(ThermalAlertService.ENABLED, false));
         styleSwitch(alertSwitch);
         add(form, alertSwitch, 6);
-        add(form, label("Перевірка кожні 15 с, поки ПК доступний.", 13, palette.muted, false), 0);
+        add(form, label("Перевірка кожні 5 с, поки ПК доступний.", 13, palette.muted, false), 0);
 
         int[] saved = ThermalAlertService.loadThresholds(preferences);
         EditText[] fields = new EditText[saved.length];
@@ -376,6 +392,112 @@ public final class MainActivity extends Activity {
         alertFeedback.setVisibility(View.GONE);
         add(form, alertFeedback, 8);
         add(form, button("Зберегти сповіщення", true, () -> saveAlerts(fields)), 10);
+    }
+
+    private void renderProtectionSettings(LinearLayout content) {
+        PcConnection endpoint = pc;
+        LinearLayout form = card();
+        add(content, form, 16);
+        add(form, label("Термозахист ПК", 18, palette.text, true), 0);
+        add(form, label("ПК вмикає максимальні оберти при критичній температурі CPU або GPU, навіть якщо телефон від’єднано.",
+                13, palette.muted, false), 7);
+        Switch enabled = new Switch(this);
+        enabled.setText("Максимум на критичній температурі");
+        enabled.setTextColor(palette.text);
+        enabled.setMinHeight(dp(52));
+        styleSwitch(enabled);
+        add(form, enabled, 4);
+        LinearLayout thresholds = row();
+        EditText cpu = addProtectionThreshold(thresholds, "Поріг CPU, °C");
+        EditText gpu = addProtectionThreshold(thresholds, "Поріг GPU, °C");
+        add(form, thresholds, 6);
+        TextView state = label("Перевіряю підтримку…", 13, palette.muted, false);
+        state.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        add(form, state, 9);
+        TextView save = button("Зберегти термозахист", true, () -> {
+            int cpuValue;
+            int gpuValue;
+            try {
+                cpuValue = Integer.parseInt(cpu.getText().toString());
+                gpuValue = Integer.parseInt(gpu.getText().toString());
+                if (cpuValue < 70 || cpuValue > 100 || gpuValue < 60 || gpuValue > 95) {
+                    throw new NumberFormatException();
+                }
+            } catch (NumberFormatException error) {
+                state.setText("Допустимі пороги: CPU 70–100 °C, GPU 60–95 °C.");
+                return;
+            }
+            boolean requested = enabled.isChecked();
+            network.execute(() -> {
+                try {
+                    JSONObject updated = endpoint.saveProtection(requested, cpuValue, gpuValue);
+                    handler.post(() -> updateProtection(form, enabled, cpu, gpu, state, updated));
+                } catch (Exception error) {
+                    handler.post(() -> state.setText("ПК не підтвердив збереження."));
+                }
+            });
+        });
+        add(form, save, 10);
+        setProtectionEnabled(enabled, cpu, gpu, save, false);
+        network.execute(() -> {
+            try {
+                JSONObject status = endpoint.protectionStatus();
+                handler.post(() -> updateProtection(form, enabled, cpu, gpu, state, status));
+            } catch (Exception error) {
+                handler.post(() -> state.setText("Термозахист недоступний. Перевірте з’єднання й версію PC Pulse на Windows."));
+            }
+        });
+    }
+
+    private EditText addProtectionThreshold(LinearLayout thresholds, String caption) {
+        LinearLayout column = column();
+        add(column, label(caption, 12, palette.muted, true), 0);
+        EditText temperature = input("");
+        temperature.setSingleLine(true);
+        temperature.setInputType(InputType.TYPE_CLASS_NUMBER);
+        temperature.setFilters(new android.text.InputFilter[] {new android.text.InputFilter.LengthFilter(3)});
+        temperature.setContentDescription(caption);
+        add(column, temperature, 6);
+        LinearLayout.LayoutParams params = weighted();
+        if (thresholds.getChildCount() > 0) {
+            params.leftMargin = dp(8);
+        }
+        thresholds.addView(column, params);
+        return temperature;
+    }
+
+    private void updateProtection(LinearLayout form, Switch enabled, EditText cpu, EditText gpu,
+                                  TextView status, JSONObject value) {
+        if (!form.isAttachedToWindow()) {
+            return;
+        }
+        boolean supported = value.optBoolean("supported");
+        enabled.setChecked(value.optBoolean("enabled"));
+        cpu.setText(Integer.toString(value.optInt("cpuCritical", 95)));
+        gpu.setText(Integer.toString(value.optInt("gpuCritical", 85)));
+        View save = form.getChildAt(form.getChildCount() - 1);
+        setProtectionEnabled(enabled, cpu, gpu, save, supported);
+        String state;
+        switch (value.optString("state")) {
+            case "unsupported": state = "Ця модель не надає керування вентиляторами PC Pulse."; break;
+            case "off": state = "Вимкнено."; break;
+            case "watching": state = "ПК перевіряє температури приблизно кожні 2 с."; break;
+            case "maximum": state = "Термозахист тримає максимальні оберти."; break;
+            case "recovering": state = "ПК чекає стабільного охолодження."; break;
+            case "manualMaximum": state = "Вентилятори вже в режимі «Максимум»."; break;
+            case "critical":
+            case "restricted": state = "Поточний профіль Control Center обмежує керування."; break;
+            case "unconfirmed": state = "Control Center ще не підтвердив зміну режиму."; break;
+            default: state = "Очікування показників датчиків.";
+        }
+        status.setText(state);
+    }
+
+    private static void setProtectionEnabled(View enabled, View cpu, View gpu, View save, boolean available) {
+        enabled.setEnabled(available);
+        cpu.setEnabled(available);
+        gpu.setEnabled(available);
+        save.setEnabled(available);
     }
 
     private void addThresholdColumn(LinearLayout row, View content) {
@@ -743,7 +865,7 @@ public final class MainActivity extends Activity {
                     }
                     setCoolingButtonsEnabled(true);
                     showCoolingFeedback(error instanceof PcConnection.ConflictException
-                            ? "Control Center не підтвердив режим."
+                            ? "Термозахист або Control Center утримує поточний режим."
                             : "Не вдалося зв’язатися з агентом.", palette.thermal);
                     restartPolling();
                 });
@@ -893,7 +1015,7 @@ public final class MainActivity extends Activity {
                         updateOverview(json);
                     }
                     setStatus("Оновлено о " + updatedAt, palette.accent);
-                    handler.postDelayed(poll, 5_000);
+                    handler.postDelayed(poll, processTab ? 5_000 : 2_000);
                 });
             } catch (Exception error) {
                 handler.post(() -> {

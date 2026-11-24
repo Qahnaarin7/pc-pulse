@@ -8,7 +8,8 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 static class MonitorServer
 {
     public static async Task<WebApplication> StartAsync(IPAddress address, int port,
-        PairingIdentity identity, MetricsSampler sampler, CancellationToken cancellationToken = default)
+        PairingIdentity identity, MetricsSampler sampler, ThermalProtection protection,
+        CancellationToken cancellationToken = default)
     {
         var expected = Encoding.ASCII.GetBytes("Bearer " + PairingIdentity.Encode(identity.Token));
         var builder = WebApplication.CreateSlimBuilder();
@@ -53,8 +54,17 @@ static class MonitorServer
         {
             if (mode is not ("automatic" or "maximum"))
                 return Results.BadRequest();
-            var cooling = sampler.SetCoolingMode(mode == "maximum");
+            var cooling = protection.SetManualMode(mode == "maximum");
             return cooling is null ? Results.Conflict() : Results.Ok(cooling);
+        });
+        app.MapGet("/v1/thermal-protection", () => protection.GetStatus());
+        app.MapPost("/v1/thermal-protection", (bool enabled, int cpuCritical, int gpuCritical) =>
+        {
+            var requested = new ProtectionSettings(enabled, cpuCritical, gpuCritical);
+            if (!requested.IsValid)
+                return Results.BadRequest();
+            var configured = protection.Configure(requested);
+            return configured is null ? Results.Conflict() : Results.Ok(configured);
         });
         try
         {

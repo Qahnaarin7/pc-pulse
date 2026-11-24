@@ -62,7 +62,15 @@ sealed class MetricsSampler(bool sensorsEnabled) : IDisposable
     {
         var sensors = sensorsEnabled ? ReadSensors() : null;
         return new TemperatureResponse(sensors?.SampledAt, sensors?.CpuTemperatureC, sensors?.Gpus ?? [],
-            CpuTemperatureStatus(sensors));
+            CpuTemperatureStatus(sensors), sensors?.Cooling);
+    }
+
+    public bool SupportsCooling()
+    {
+        if (!sensorsEnabled)
+            return false;
+        try { return gigabyte.Value is not null; }
+        catch (Exception) { return false; }
     }
 
     public CoolingResponse? SetCoolingMode(bool maximum)
@@ -237,7 +245,7 @@ sealed class MetricsSampler(bool sensorsEnabled) : IDisposable
     {
         lock (sensorLock)
         {
-            if (sensorSnapshot is not null && Stopwatch.GetElapsedTime(sensorsAt).TotalSeconds < 15)
+            if (sensorSnapshot is not null && Stopwatch.GetElapsedTime(sensorsAt) < TimeSpan.FromMilliseconds(1900))
                 return sensorSnapshot;
 
             float? cpu = null;
@@ -400,7 +408,7 @@ sealed record ComponentTemperatures(DateTimeOffset SampledAt, List<ComponentTemp
     List<ComponentTemperature> Disks);
 sealed record ComponentTemperature(string Name, float TemperatureC);
 sealed record TemperatureResponse(DateTimeOffset? SampledAt, float? CpuTemperatureC,
-    List<GpuEntry> Gpus, string CpuTemperatureStatus);
+    List<GpuEntry> Gpus, string CpuTemperatureStatus, CoolingResponse? Cooling);
 sealed record MemoryEntry(ulong UsedBytes, ulong TotalBytes);
 sealed record GpuEntry(string Name, float? TemperatureC, float? LoadPercent);
 sealed record ProcessEntry(int Pid, string Name, long WorkingSetBytes, double? CpuPercent);

@@ -110,7 +110,7 @@ def main():
     parser.add_argument("--wix", required=True, type=Path)
     parser.add_argument("--payload", required=True, type=Path)
     parser.add_argument("--architecture", choices=("x64", "arm64"), default="x64")
-    parser.add_argument("--version", default="0.3.0")
+    parser.add_argument("--version", default="0.4.0")
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
     payload = args.payload.resolve(strict=True)

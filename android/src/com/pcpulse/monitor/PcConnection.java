@@ -87,6 +87,15 @@ final class PcConnection {
         return fetch("/v1/cooling/" + (maximum ? "maximum" : "automatic"), "POST");
     }
 
+    JSONObject protectionStatus() throws Exception {
+        return fetch("/v1/thermal-protection", "GET");
+    }
+
+    JSONObject saveProtection(boolean enabled, int cpuCritical, int gpuCritical) throws Exception {
+        return fetch("/v1/thermal-protection?enabled=" + enabled
+                + "&cpuCritical=" + cpuCritical + "&gpuCritical=" + gpuCritical, "POST");
+    }
+
     private JSONObject fetch(String path, String method) throws Exception {
         int first = preferred;
         IOException problem = null;

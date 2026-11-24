@@ -1,55 +1,62 @@
 # PC Pulse
 
-PC Pulse показує стан Windows-ПК на Android і в окремому Windows-вікні. Інтерфейс українською, з темами «День» і «Ніч».
+PC Pulse monitors a Windows PC from an Android phone and from a Windows desktop window. Both apps offer System, Light, and Dark appearance modes. The app interface is available in Ukrainian.
 
-## Встановлення
+## Installation
 
-Завантажте MSI для архітектури вашої Windows і APK для телефона з релізу GitHub. Для Windows потрібна версія, сумісна з .NET 10, для телефона — Android 8.0 або новіший. MSI містить середовище виконання .NET. [Підтримувані версії Windows](https://learn.microsoft.com/dotnet/core/install/windows#supported-versions)
+Download the MSI for your Windows architecture and the APK for your phone from [GitHub Releases](https://github.com/Qahnaarin7/pc-pulse/releases). The MSI bundles the .NET runtime. The phone requires Android 8.0 or later. [Supported Windows versions](https://learn.microsoft.com/dotnet/core/install/windows#supported-versions)
 
-1. Якщо вже запущено попередній агент PC Pulse, завершіть його, щоб звільнити TCP-порт 8787.
-2. Встановіть MSI й відкрийте **PC Pulse** з меню «Пуск». У **Налаштуваннях** натисніть **Копіювати код**.
-3. Встановіть APK на телефон, відкрийте PC Pulse і вставте код. Поводьтеся з ним як із паролем.
-4. Щоб Windows-агент запускався в треї після входу до Windows, увімкніть цю опцію в налаштуваннях.
+1. If a previous PC Pulse agent is running, exit it to free TCP port 8787.
+2. Install the MSI. Open **PC Pulse** from the Start menu, select **Settings**, and copy the pairing code.
+3. Install the APK, open PC Pulse, and paste the code. Treat the pairing code like a password. It authorizes monitoring and supported hardware controls.
+4. To start PC Pulse in the Windows tray after signing in, enable the startup option in Windows settings inside the app.
 
-Згортання і закриття Windows-вікна ховають його в трей. Подвійне натискання на значок повертає вікно. Для завершення використайте **Вихід** у меню значка. Перед оновленням MSI завершіть програму через трей.
+Closing or minimizing the Windows window moves it to the tray. Double-click the icon to reopen the window, or right-click it and choose **Exit** to stop the agent. Use **Exit** before upgrading the MSI.
 
-## Підключення з іншої мережі
+## Access from another network
 
-PC Pulse працює через локальну мережу або приватну VPN. Для Tailscale встановіть клієнт на обох пристроях і під’єднайте їх до однієї приватної мережі Tailscale. Перевірте, що політика доступу дає телефону право підключитися до ПК. Далі скопіюйте свіжий код із Windows після появи VPN-адаптера і вставте його на телефоні. Один код може містити локальну й VPN-адресу. Android пробує інші адреси з коду, якщо поточна стає недоступною.
+PC Pulse works over a local network or a private VPN. For Tailscale, install the client on both devices, join the same tailnet, and allow the phone to reach the PC in the tailnet policy. When the PC's VPN adapter is active, copy a fresh pairing code. A single code can include both Wi-Fi and VPN addresses. Android tries the remaining addresses if the current route stops working.
 
-Сервер перевіряє ключ доступу та приймає підключення з локальних або приватних VPN-адрес. Телефон перевіряє сертифікат за відбитком у коді. MSI додає правила Windows Firewall для TCP 8787 у приватній локальній мережі та для адрес Tailscale. Інші приватні VPN можуть потребувати свого правила брандмауера. Код варто оновити, якщо ПК змінив адресу й альтернативної адреси в старому коді немає. [Підключення через Tailscale](https://tailscale.com/docs/how-to/connect-to-devices)
+The agent authenticates requests and accepts local or private VPN addresses. The phone verifies the PC's TLS certificate against the fingerprint in the pairing code. The Windows installer creates TCP 8787 rules for private LAN clients and Tailscale addresses. Other private VPNs can require a separate firewall rule. Generate a new code if the PC's address changes and the old code has no alternate route. [Tailscale connectivity guide](https://tailscale.com/docs/how-to/connect-to-devices)
 
-## Збір даних і фонові сповіщення
+## Sampling and notifications
 
-| Дані | Інтервал |
+| Data or activity | Interval |
 | --- | ---: |
-| Завантаження, RAM і процеси у відкритому інтерфейсі | 5 с |
-| Повторне опитування сенсорів CPU і GPU | 15 с |
-| Диски та модулі RAM під час перегляду огляду | 60 с |
-| Температурні сповіщення із ввімкненим фоновим режимом | 15 с |
+| CPU, GPU, and memory dashboard | About 2 seconds |
+| Process list | 5 seconds |
+| Disk and memory-module sensors with the dashboard open | 60 seconds |
+| Windows thermal protection, when enabled | About 2 seconds |
+| Android background temperature alerts, when enabled | 5 seconds |
 
-Перший вимір CPU для процесів триває близько секунди. Далі відсоток відображає завантаження всього процесора за проміжок між знімками. «За пам’яттю» сортує за робочим набором. Згорнуте Windows-вікно не оновлює панель. Агент обробляє запити телефона, коли той підключений.
+The first per-process CPU measurement takes about a second. CPU values represent each process's share of total CPU time over the displayed measurement window. Memory sorting uses the working set. The Windows dashboard pauses updates while the window is in the tray. A shared sensor cache combines closely spaced requests from the desktop and phone.
 
-Увімкніть **Налаштування → Сповіщення про температуру** на Android, збережіть пороги й дозвольте сповіщення. Початкові пороги для CPU становлять 90/95 °C, для GPU — 80/85 °C. Після першого налаштування моніторинг відновлюється після завантаження телефона, коли Android дозволяє автозапуск. У фоні опитується лише температурний маршрут. Службове сповіщення можна зупинити його кнопкою **Зупинити**.
+Enable **Temperature alerts** in Android settings, save the thresholds, and grant notifications. The defaults are 90 °C warning and 95 °C critical for the CPU, and 80 °C warning and 85 °C critical for the GPU. After setup, Android restarts monitoring after boot when the system and device manufacturer allow it. The background service polls temperatures only and shows a quiet notification with a **Stop** button. Android Doze can delay network checks. A force-stopped app needs to be opened again. [Android Doze behavior](https://developer.android.com/training/monitoring-device-state/doze-standby)
 
-Під час глибокого сну Android може відкласти мережеву перевірку. Примусова зупинка програми скасовує фоновий запуск до наступного відкриття. На Android із додатковими обмеженнями виробника може знадобитися дозволити автозапуск для PC Pulse. [Режим сну Android](https://developer.android.com/training/monitoring-device-state/doze-standby)
+## Automatic full-speed cooling
 
-## Сумісність обладнання
+In **Settings → Thermal protection** on Windows or Android, enable **Full speed at critical temperature** and save the CPU and GPU thresholds. The default limits are **95 °C for the CPU** and **85 °C for the GPU**. Thermal protection starts disabled. Settings are stored on the PC and apply to both apps.
 
-Завантаження CPU, використання RAM і перелік процесів отримуємо з Windows. Температури накопичувачів також читаємо через стандартний інтерфейс Windows для NVMe, коли він доступний. LibreHardwareMonitor читає сенсори CPU, GPU, SMART накопичувачів і DIMM, які надає обладнання. Деякі датчики потребують PawnIO і запуску від адміністратора. Відсутній показник позначено прочерком або повідомленням у відповідній плитці. [Запити температури NVMe в Windows](https://learn.microsoft.com/windows/win32/fileio/working-with-nvme-devices#temperature-queries)
+The Windows agent samples locally, including when it is in the tray and the phone is disconnected. The first valid reading at or above either limit requests the vendor's Full Speed mode. When PC Pulse selected Full Speed, it returns to Auto after the temperatures stay at least 5 °C below their limits for 30 seconds. If a sensor that triggered Full Speed stops reporting, PC Pulse holds Full Speed until it can verify recovery. Automatic recovery applies only to Full Speed selected by PC Pulse.
 
-На перевіреній моделі GIGABYTE G6X 9KG додатково працюють датчик Control Center, оберти вентиляторів і штатні режими «Авто» й «Максимум». Стан вентилятора залежить від моделі й драйвера. Власні криві налаштовуються в Control Center. [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/tag/v0.9.6) · [Посібник GIGABYTE G6X](https://download.gigabyte.com/FileList/Manual/GIGABYTE_G6X_E-Manual_V1.0.pdf)
+Fan control currently supports the GIGABYTE G6X 9KG with the Control Center driver and an available Auto or Full Speed profile. The thermal feature supplements the hardware's built-in protection. The hardware can react independently of Windows sampling or sensor availability. [GIGABYTE G6X manual](https://download.gigabyte.com/FileList/Manual/GIGABYTE_G6X_E-Manual_V1.0.pdf) · [Intel Digital Thermal Sensor](https://edc.intel.com/content/www/us/en/design/products/platforms/details/raptor-lake-s/13th-generation-core-processors-datasheet-volume-1-of-2/005/digital-thermal-sensor/)
 
-## Збірка
+## Hardware compatibility
 
-Для Windows потрібні .NET 10 SDK, Python 3.10+ і WiX Toolset 3.14.1.
+CPU load, memory usage, and process data come from Windows. NVMe temperatures use the Windows storage interface when available. LibreHardwareMonitor provides compatible CPU, GPU, SMART, and DIMM readings. Some sensors require PawnIO and an elevated Windows agent. An unavailable reading is shown as a dash or a message in its tile. [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/tag/v0.9.6) · [Windows NVMe temperature queries](https://learn.microsoft.com/windows/win32/fileio/working-with-nvme-devices#temperature-queries)
+
+## Build from source
+
+Windows builds use the .NET 10 SDK, Python 3.10 or later, and WiX Toolset 3.14.1.
 
 ```powershell
 dotnet publish .\desktop\PcPulse.Desktop.csproj -c Release -r win-x64 --self-contained true -o .\dist\win-x64
-python .\installer\build.py --wix C:\path\to\wix --payload .\dist\win-x64 --out .\dist\PC-Pulse-Windows-x64.msi
+python .\installer\build.py --wix C:\path\to\wix --payload .\dist\win-x64 --version 0.4.0 --out .\dist\PC-Pulse-Windows-x64.msi
 ```
 
-Для Android потрібні JDK 17 або 21, Android SDK Platform 35 і Android SDK Build Tools 35.0.0.
+For Arm64, use `-r win-arm64` with .NET and `--architecture arm64` with the installer script. Use `--port` to run a Windows test instance on a different TCP port. Pairing credentials and thermal settings are kept in the local Windows user profile.
+
+Android builds use JDK 17 or 21, Android SDK Platform 35, and Android SDK Build Tools 35.0.0.
 
 ```powershell
 .\android\build.ps1 -JavaHome 'C:\path\to\jdk' `
@@ -57,4 +64,6 @@ python .\installer\build.py --wix C:\path\to\wix --payload .\dist\win-x64 --out 
     -BuildTools 'C:\path\to\sdk\build-tools\35.0.0'
 ```
 
-Скрипт Android використовує локальний ключ у `android\build\development.p12`. Зберігайте свій ключ для оновлення власних збірок. Windows можна також збирати для Arm64 через `-r win-arm64` та `--architecture arm64`. Відбиток сертифіката та ключ Windows зберігаються в локальному профілі користувача й не входять у збірку. Параметр `--port` дозволяє запустити тестовий Windows-екземпляр на іншому порту.
+The Android build script uses a local key at `android\build\development.p12`. Keep your key to sign updates to a build you distribute.
+
+Run the thermal policy checks with `dotnet run --project .\tests\PcPulse.ThermalChecks.csproj`. These checks use synthetic readings and issue no hardware commands.
