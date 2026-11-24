@@ -1,5 +1,9 @@
 package com.pcpulse.monitor;
 
+import android.content.Context;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.util.Base64;
 
 import org.json.JSONObject;
@@ -16,6 +20,7 @@ import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.Locale;
+import java.util.Objects;
 
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
@@ -29,17 +34,46 @@ final class PcConnection {
     private static final int MAX_RESPONSE = 2 * 1024 * 1024;
     private final String[] addresses;
     private volatile int preferred;
+    private final RelayConnection relay;
+    private volatile boolean mobile;
+    private volatile boolean usingRelay;
+    private Network activeNetwork;
     private final String token;
     private final byte[] pin;
     private SSLSocketFactory sockets;
 
     private PcConnection(String[] addresses, String token, byte[] pin) {
+        this(addresses, token, pin, null);
+    }
+
+    private PcConnection(String[] addresses, String token, byte[] pin, RelayConnection relay) {
         this.addresses = addresses;
         this.token = token;
         this.pin = pin;
+        this.relay = relay;
     }
 
     static PcConnection fromCode(String code) {
+        if (code.startsWith("PCP3-")) {
+            if (!code.matches("PCP3-[a-zA-Z0-9_-]{160,3900}")) {
+                throw new IllegalArgumentException("Вставте весь код Cloudflare із Windows.");
+            }
+            try {
+                JSONObject fields = new JSONObject(new String(Base64.decode(code.substring(5), BASE64), StandardCharsets.UTF_8));
+                RelayConnection cloud = new RelayConnection(fields);
+                String direct = fields.isNull("direct") ? "" : fields.getString("direct");
+                if (direct.isEmpty()) {
+                    return new PcConnection(new String[0], "", new byte[0], cloud);
+                }
+                if (!direct.startsWith("PCP1-") && !direct.startsWith("PCP2-")) {
+                    throw new IllegalArgumentException();
+                }
+                PcConnection lan = fromCode(direct);
+                return new PcConnection(lan.addresses, lan.token, lan.pin, cloud);
+            } catch (Exception error) {
+                throw new IllegalArgumentException("Код Cloudflare пошкоджений.", error);
+            }
+        }
         if (!code.matches("PCP[12]-[a-zA-Z0-9_-]{83,123}")) {
             throw new IllegalArgumentException("Вставте весь код PC Pulse із Windows.");
         }
@@ -71,7 +105,22 @@ final class PcConnection {
     }
 
     String address() {
-        return addresses[preferred];
+        return usingRelay || addresses.length == 0 ? "Cloudflare" : addresses[preferred];
+    }
+
+    void updateNetwork(Context context) {
+        if (relay == null) {
+            return;
+        }
+        ConnectivityManager manager = context.getSystemService(ConnectivityManager.class);
+        Network current = manager.getActiveNetwork();
+        NetworkCapabilities active = current == null ? null : manager.getNetworkCapabilities(current);
+        mobile = active != null && active.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
+                !active.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
+        if (!Objects.equals(activeNetwork, current)) {
+            activeNetwork = current;
+            usingRelay = false;
+        }
     }
 
     JSONObject fetch(boolean processes, boolean sensors) throws Exception {
@@ -99,6 +148,18 @@ final class PcConnection {
     private JSONObject fetch(String path, String method) throws Exception {
         int first = preferred;
         IOException problem = null;
+        boolean triedRelay = relay != null && (mobile || usingRelay || addresses.length == 0);
+        if (triedRelay) {
+            try {
+                JSONObject response = relay.fetch(path, method);
+                usingRelay = true;
+                return response;
+            } catch (RejectedException | ConflictException | ServerResponseException error) {
+                throw error;
+            } catch (IOException error) {
+                problem = error;
+            }
+        }
         for (int i = 0; i < addresses.length; i++) {
             if (Thread.currentThread().isInterrupted()) {
                 throw new java.io.InterruptedIOException();
@@ -107,6 +168,7 @@ final class PcConnection {
             try {
                 JSONObject response = fetch(addresses[candidate], path, method);
                 preferred = candidate;
+                usingRelay = false;
                 return response;
             } catch (RejectedException | ConflictException | ServerResponseException error) {
                 throw error;
@@ -116,7 +178,25 @@ final class PcConnection {
                 }
             }
         }
+        if (relay != null && !triedRelay) {
+            JSONObject response = relay.fetch(path, method);
+            usingRelay = true;
+            return response;
+        }
         throw problem == null ? new IOException("No available PC address") : problem;
+    }
+
+    static JSONObject decodeReply(int status, String body) throws Exception {
+        if (status == 401) {
+            throw new RejectedException();
+        }
+        if (status == 409) {
+            throw new ConflictException();
+        }
+        if (status != 200) {
+            throw new ServerResponseException(status);
+        }
+        return new JSONObject(body);
     }
 
     private JSONObject fetch(String address, String path, String method) throws Exception {

@@ -22,6 +22,7 @@ public partial class App : Application
     private MainWindow? window;
     private MetricsSampler? sampler;
     private ThermalProtection? protection;
+    private CloudRelay? relay;
     private PairingIdentity? identity;
     private WebApplication? server;
     private Task<WebApplication>? pendingServer;
@@ -74,6 +75,8 @@ public partial class App : Application
             server = await pendingServer;
             if (exiting)
                 return;
+            relay = new CloudRelay(identity, port);
+            window.SetRelay(relay);
             window.SetServer(identity, $"Готово до підключення · порт {port}");
         }
         catch (Exception)
@@ -106,6 +109,8 @@ public partial class App : Application
             try { server = await pendingServer; }
             catch (Exception) { }
         }
+        if (relay is not null)
+            await relay.DisposeAsync();
         if (server is not null)
         {
             try

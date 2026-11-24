@@ -6,4 +6,8 @@ tests/bin/
 tests/obj/
 android/build/
 installer/build/
+relay/node_modules/
+relay/.wrangler/
+relay/.dev.vars*
+relay/.env*
 dist/

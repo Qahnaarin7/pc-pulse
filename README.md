@@ -15,6 +15,21 @@ Closing or minimizing the Windows window moves it to the tray. Double-click the 
 
 ## Access from another network
 
+### Cloudflare Workers
+
+Run the managed relay in your Cloudflare account once. After the PC is registered and the phone receives the updated pairing code, Windows reconnects on startup and Android can reach the PC on mobile data without a VPN client or inbound router ports. The PC and agent must be online.
+
+1. From the repository's `relay` folder, run `npm ci` and `npx wrangler login`.
+2. Generate an enrollment key with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`. Put it in a private JSON file with the property `RELAY_ENROLLMENT_KEY`.
+3. Deploy with `npx wrangler deploy --secrets-file path-to-private.json`. Copy the HTTPS URL printed by Wrangler. A personal deployment can use `workers.dev`.
+4. In Windows PC Pulse settings, enable Cloudflare access and enter the HTTPS URL and enrollment key. Wait for **Connected**, then copy the new pairing code into Android. The PC saves its individual host credentials after registering.
+
+Phone requests and PC responses use end-to-end AES-GCM encryption. The Worker validates separate random routing credentials and forwards encrypted messages. The encryption key stays with the paired apps. The relay processes routing identifiers, timing, and ciphertext length. Keep the enrollment key private. It controls registration of new PCs and belongs outside the repository.
+
+This repository includes the relay and its integration checks. To run the checks against a local Worker, start `npx wrangler dev --local --port 8788` with a disposable enrollment key configured in an ignored `.dev.vars` file, then run `npm test` with that key in `PCPULSE_TEST_ENROLLMENT`. [Cloudflare WebSocket Hibernation](https://developers.cloudflare.com/durable-objects/best-practices/websockets/) · [workers.dev setup](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)
+
+### LAN and private VPN
+
 PC Pulse works over a local network or a private VPN. For Tailscale, install the client on both devices, join the same tailnet, and allow the phone to reach the PC in the tailnet policy. When the PC's VPN adapter is active, copy a fresh pairing code. A single code can include both Wi-Fi and VPN addresses. Android tries the remaining addresses if the current route stops working.
 
 The agent authenticates requests and accepts local or private VPN addresses. The phone verifies the PC's TLS certificate against the fingerprint in the pairing code. The Windows installer creates TCP 8787 rules for private LAN clients and Tailscale addresses. Other private VPNs can require a separate firewall rule. Generate a new code if the PC's address changes and the old code has no alternate route. [Tailscale connectivity guide](https://tailscale.com/docs/how-to/connect-to-devices)
@@ -51,7 +66,7 @@ Windows builds use the .NET 10 SDK, Python 3.10 or later, and WiX Toolset 3.14.1
 
 ```powershell
 dotnet publish .\desktop\PcPulse.Desktop.csproj -c Release -r win-x64 --self-contained true -o .\dist\win-x64
-python .\installer\build.py --wix C:\path\to\wix --payload .\dist\win-x64 --version 0.4.0 --out .\dist\PC-Pulse-Windows-x64.msi
+python .\installer\build.py --wix C:\path\to\wix --payload .\dist\win-x64 --version 0.5.0 --out .\dist\PC-Pulse-Windows-x64.msi
 ```
 
 For Arm64, use `-r win-arm64` with .NET and `--architecture arm64` with the installer script. Use `--port` to run a Windows test instance on a different TCP port. Pairing credentials and thermal settings are kept in the local Windows user profile.

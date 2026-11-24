@@ -264,7 +264,8 @@ public final class MainActivity extends Activity {
         scroll.addView(content, new ScrollView.LayoutParams(MATCH, WRAP));
         add(content, label(pc == null ? "Підключіть комп’ютер" : "Налаштування", 30, palette.text, true), 0);
         if (pc == null) {
-            add(content, label("Скопіюйте код із PC Pulse на Windows. Підключення можливе через Wi-Fi або приватну VPN.", 16, palette.muted, false), 10);
+            add(content, label("Скопіюйте код із PC Pulse на Windows. Підключення можливе через Wi-Fi, VPN або Cloudflare.",
+                    16, palette.muted, false), 10);
         } else {
             add(content, button("До огляду", false, this::openDashboard), 12);
             LinearLayout appearance = card();
@@ -396,6 +397,7 @@ public final class MainActivity extends Activity {
 
     private void renderProtectionSettings(LinearLayout content) {
         PcConnection endpoint = pc;
+        endpoint.updateNetwork(this);
         LinearLayout form = card();
         add(content, form, 16);
         add(form, label("Термозахист ПК", 18, palette.text, true), 0);
@@ -844,6 +846,7 @@ public final class MainActivity extends Activity {
         stopPolling();
         final int ticket = generation;
         final PcConnection connection = pc;
+        connection.updateNetwork(this);
         showCoolingFeedback("Зміна режиму…", palette.muted);
         setCoolingButtonsEnabled(false);
         request = network.submit(() -> {
@@ -994,6 +997,7 @@ public final class MainActivity extends Activity {
         final boolean processTab = processes;
         final boolean readSensors = sensors;
         final PcConnection endpoint = pc;
+        endpoint.updateNetwork(this);
         request = network.submit(() -> {
             try {
                 JSONObject json = endpoint.fetch(processTab, readSensors);

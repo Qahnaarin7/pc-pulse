@@ -186,8 +186,28 @@
                                 Content="Копіювати код" IsEnabled="False" Click="CopyCodeClicked" />
                             <TextBlock x:Name="CopyFeedback" Style="{StaticResource Muted}" Margin="12,0,0,0" VerticalAlignment="Center" />
                         </DockPanel>
-                        <TextBlock Text="Код дозволяє підключитися в локальній мережі й через приватну VPN, якщо її адаптер активний на ПК."
+                        <TextBlock Text="Код може містити локальні адреси й доступ через Cloudflare. Для Cloudflare спочатку підключіть ретранслятор нижче."
                             Style="{StaticResource Muted}" Margin="0,12,0,0" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="Доступ через інтернет" FontSize="19" FontWeight="SemiBold" />
+                        <CheckBox x:Name="RelayEnabled" Content="Підключатися через Cloudflare Workers"
+                            Foreground="{DynamicResource Ink}" Margin="0,12,0,10" />
+                        <TextBlock Text="HTTPS-адреса Worker" Style="{StaticResource Muted}" />
+                        <TextBox x:Name="RelayAddress" Padding="8,5" Margin="0,4,0,12"
+                            Background="{DynamicResource Field}" Foreground="{DynamicResource Ink}" BorderBrush="{DynamicResource Line}" />
+                        <TextBlock Text="Ключ реєстрації ПК · потрібен один раз" Style="{StaticResource Muted}" />
+                        <PasswordBox x:Name="RelayEnrollment" Padding="8,5" Margin="0,4,0,12"
+                            Background="{DynamicResource Field}" Foreground="{DynamicResource Ink}" BorderBrush="{DynamicResource Line}" />
+                        <DockPanel>
+                            <Button x:Name="RelaySave" DockPanel.Dock="Left" Content="Зберегти" Click="SaveRelayClicked"
+                                IsEnabled="False" />
+                            <TextBlock x:Name="RelayStatus" Style="{StaticResource Muted}" Margin="12,0,0,0"
+                                VerticalAlignment="Center" />
+                        </DockPanel>
+                        <TextBlock x:Name="RelayFeedback" Style="{StaticResource Muted}" Margin="0,6,0,0" />
                     </StackPanel>
                 </Border>
                 <Border Style="{StaticResource Card}">

@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer refresh;
     private CancellationTokenSource? request;
     private PairingIdentity? identity;
+    private CloudRelay? relay;
     private ProcessSnapshot? processes;
     private bool ramSort;
     private bool day;
@@ -56,6 +57,16 @@ public partial class MainWindow : Window
     {
         identity = currentIdentity;
         ServerStatus.Text = message;
+        UpdateAddresses();
+    }
+
+    internal void SetRelay(CloudRelay bridge)
+    {
+        relay = bridge;
+        var current = bridge.ReadStatus();
+        RelayEnabled.IsChecked = current.Enabled;
+        RelayAddress.Text = current.Origin;
+        RelaySave.IsEnabled = true;
         UpdateAddresses();
     }
 
@@ -247,22 +258,55 @@ public partial class MainWindow : Window
         var addresses = MonitorServer.PrivateAddresses();
         AddressList.Text = addresses.Count == 0 ? "Активних локальних IPv4-адрес поки немає."
             : string.Join("   ·   ", addresses.Select(a => $"{a.Adapter} {a.Address}"));
-        CopyCodeButton.IsEnabled = identity is not null && addresses.Count > 0;
+        var status = relay?.ReadStatus();
+        CopyCodeButton.IsEnabled = identity is not null && (addresses.Count > 0 || status?.CanPair == true);
+        RelayStatus.Text = status?.State switch
+        {
+            "online" => "Підключено. Скопіюйте новий код для телефона.",
+            "connecting" => "Підключення до Cloudflare…",
+            "offline" => "Cloudflare не відповів. Перевірте адресу й ключ реєстрації.",
+            _ => "Вимкнено."
+        };
     }
 
     private void CopyCodeClicked(object sender, RoutedEventArgs args)
     {
         var addresses = MonitorServer.PrivateAddresses();
-        if (identity is null || addresses.Count == 0)
+        if (identity is null)
+            return;
+        var direct = addresses.Count > 0 ? identity.CreateCode(addresses, port) : null;
+        var code = relay?.PhoneCode(direct) ?? direct;
+        if (code is null)
             return;
         try
         {
-            Clipboard.SetText(identity.CreateCode(addresses, port));
+            Clipboard.SetText(code);
             CopyFeedback.Text = "Код скопійовано. Вставте його в PC Pulse на телефоні.";
         }
         catch (System.Runtime.InteropServices.ExternalException)
         {
             CopyFeedback.Text = "Буфер обміну зайнятий. Спробуйте ще раз.";
+        }
+    }
+
+    private void SaveRelayClicked(object sender, RoutedEventArgs args)
+    {
+        if (relay is null)
+            return;
+        try
+        {
+            relay.Configure(RelayEnabled.IsChecked == true, RelayAddress.Text, RelayEnrollment.Password.Trim());
+            RelayEnrollment.Clear();
+            RelayFeedback.Text = "Налаштування збережено.";
+            UpdateAddresses();
+        }
+        catch (ArgumentException error)
+        {
+            RelayFeedback.Text = error.Message;
+        }
+        catch (Exception)
+        {
+            RelayFeedback.Text = "Не вдалося зберегти налаштування Cloudflare.";
         }
     }
 

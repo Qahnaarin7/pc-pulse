@@ -119,6 +119,7 @@ public final class ThermalAlertService extends Service {
                 pc = PcConnection.fromCode(currentPairing);
                 pairing = currentPairing;
             }
+            pc.updateNetwork(this);
             JSONObject json = pc.temperatures();
             if (network.isShutdown()) {
                 return;
